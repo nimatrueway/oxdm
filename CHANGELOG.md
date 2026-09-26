@@ -6,6 +6,42 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.5.0] - 2026-09-26
+
+The go2rtc sidecar is gone. Live video is now an in-process RTSP pipeline
+(retina + WebCodecs), which also enables recording, snapshots from the stream,
+and a picture-in-picture window.
+
+### Added
+- Native RTSP live view: retina pulls H.264/H.265 + audio, frames are decoded
+  in the WebView with WebCodecs; OpenH264 MJPEG transcode as fallback.
+- Record the live stream to Matroska under `~/Movies/OxDM/`.
+- Snapshot falls back to the latest RTSP key frame when `GetSnapshotUri` faults.
+- Picture-in-picture window: always-on-top, frameless (macOS title bar hidden,
+  native edge resize), drag-to-move, aspect ratio locked to the source.
+- Fixed profiles (which cameras refuse to delete) can be hidden.
+- `~/.oxdm/session.toml` restores the last device, profile, view and settings
+  tab on launch.
+- Play/mute controls on the live bar.
+
+### Changed
+- RTSP is the default live mode in Live Video, Imaging and PTZ; Snapshot
+  (MJPEG polling) stays one tab away.
+- Discovered and Manual device tabs are merged into one list; Scan and Add
+  live in the sidebar footer.
+- Profile thumbnails fall back to an RTSP key frame when the snapshot URI is
+  missing.
+
+### Removed
+- go2rtc download, sidecar process and its bundling steps.
+
+### Fixed
+- ~7 s picture freezes on TP-Link Tapo: retina's SET_PARAMETER keepalive gets
+  a 400 with a stale CSeq. retina 0.4.20 is vendored via
+  `scripts/vendor-retina.sh` with a patch that prefers GET_PARAMETER.
+
+---
+
 ## [0.4.1] - 2026-09-09
 
 Built on oxvif 0.16.0. Discovery reports returned I/O errors and keeps known
