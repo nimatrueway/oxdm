@@ -112,14 +112,20 @@ The equivalent Fedora packages are `webkit2gtk4.1-devel`, `gtk3-devel`,
   resizes with its divider, and camera thumbnails have a configurable size.
   The sidebar's collapsed state is remembered across restarts.
   A hold-and-drag pan control sits beside Playback options and shares the PTZ
-  panel's speed setting, saved across navigation and restarts. Release stops
-  the camera. During dragging, an overlay
+  panel's speed setting, saved across navigation and restarts. Movement follows
+  mouse motion; pausing the pointer or releasing the button stops the camera.
+  During dragging, an overlay
   compares the starting and current camera-reported position and remaining
   travel in each direction. Missing position/range data stays unknown.
   Closing PiP restores the main window.
 - **App settings** — the sidebar gear opens theme, language, default camera
   credentials, capture folders, TLS validation, logging, and About. Credentials
   remain in the system keychain, with per-device overrides preserved.
+  Export/import uses plain JSON for preferences, cameras, groups, and hidden
+  profiles. **Include credentials** is off by default; enabling it includes
+  readable credentials in the exported file. Imports merge cameras and groups
+  after confirmation and preserve local credentials when the backup omits them.
+  Camera settings use a separate wrench in the video toolbar.
 - **Discovery** — three-round WS-Discovery scan of the local network, plus
   manually-added devices. Discovered devices persist across restarts. Returned
   I/O errors are shown separately from a successful scan finding no devices;

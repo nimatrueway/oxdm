@@ -189,6 +189,204 @@ fn saved_preferences_round_trip_without_credentials() {
 }
 
 #[test]
+fn settings_backup_excludes_all_credential_tiers_when_unchecked() {
+    let backup = settings_backup_fixture(false);
+    let encoded = serde_json::to_string(&backup).unwrap();
+    assert!(!backup.includes_credentials());
+    for secret in [
+        "global-secret",
+        "camera-secret",
+        "group-secret",
+        "member-secret",
+    ] {
+        assert!(!encoded.contains(secret));
+    }
+    let saved: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert!(saved.get("credentials").is_none());
+    assert!(saved["groups"][0].get("credentials").is_none());
+    assert!(saved["groups"][0].get("device_credentials").is_none());
+    assert_eq!(saved["preferences"]["ptz_speed"], 0.65);
+    assert_eq!(saved["devices"][0]["addr"], "http://camera/onvif/device");
+}
+
+#[test]
+fn settings_backup_plain_round_trip_rejects_bad_data() {
+    let backup = settings_backup_fixture(false);
+    let encoded = crate::persist::encode_settings_backup(&backup).unwrap();
+    let restored = crate::persist::decode_settings_backup(&encoded).unwrap();
+    assert!(!restored.includes_credentials());
+    assert_eq!(restored.preferences.ptz_speed, 0.65);
+    assert!(restored.preferences.sidebar_collapsed);
+    assert_eq!(restored.hidden_profiles, backup.hidden_profiles);
+
+    let mut invalid = settings_backup_fixture(false);
+    invalid.version = 2;
+    assert!(
+        crate::persist::decode_settings_backup(&serde_json::to_vec(&invalid).unwrap()).is_err()
+    );
+    invalid.version = 1;
+    invalid.devices[0].addr = "http://user:password@camera/onvif/device".into();
+    assert!(crate::persist::encode_settings_backup(&invalid).is_err());
+    assert!(crate::persist::decode_settings_backup(b"not a backup").is_err());
+    assert!(
+        crate::persist::decode_settings_backup(&vec![0; crate::persist::MAX_BACKUP_BYTES + 1])
+            .is_err()
+    );
+}
+
+#[test]
+fn settings_backup_plain_json_round_trips_included_credentials() {
+    let backup = settings_backup_fixture(true);
+    let encoded = crate::persist::encode_settings_backup(&backup).unwrap();
+    for secret in [
+        "global-secret",
+        "camera-secret",
+        "group-secret",
+        "member-secret",
+    ] {
+        assert!(std::str::from_utf8(&encoded).unwrap().contains(secret));
+    }
+    let restored = crate::persist::decode_settings_backup(&encoded).unwrap();
+    assert!(restored.includes_credentials());
+    assert_eq!(
+        serde_json::to_value(&restored).unwrap(),
+        serde_json::to_value(&backup).unwrap()
+    );
+}
+
+#[test]
+fn settings_backup_merges_without_removing_devices_or_unexported_credentials() {
+    let mut global = Credentials::default();
+    let mut devices = Vec::new();
+    let mut groups = Vec::new();
+    settings_backup_fixture(true).merge_into(&mut global, &mut devices, &mut groups);
+    assert_eq!(global.password, "global-secret");
+    assert_eq!(
+        devices[0].credentials.as_ref().unwrap().password,
+        "camera-secret"
+    );
+    assert_eq!(
+        groups[0].credentials.as_ref().unwrap().password,
+        "group-secret"
+    );
+    assert_eq!(
+        groups[0].device_credentials[&devices[0].addr].password,
+        "member-secret"
+    );
+
+    global.password = "local-global".into();
+    devices[0].credentials.as_mut().unwrap().password = "local-camera".into();
+    groups[0].credentials.as_mut().unwrap().password = "local-group".into();
+    groups[0]
+        .device_credentials
+        .get_mut(&devices[0].addr)
+        .unwrap()
+        .password = "local-member".into();
+    let mut extra = devices[0].clone();
+    extra.addr = "http://other-camera/onvif/device".into();
+    devices.push(extra);
+    let mut extra_group = groups[0].clone();
+    extra_group.id = "local-group".into();
+    groups.push(extra_group);
+
+    let encoded = crate::persist::encode_settings_backup(&settings_backup_fixture(false)).unwrap();
+    let backup = crate::persist::decode_settings_backup(&encoded).unwrap();
+    backup.merge_into(&mut global, &mut devices, &mut groups);
+    assert_eq!(devices.len(), 2);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(global.password, "local-global");
+    assert_eq!(
+        devices[0].credentials.as_ref().unwrap().password,
+        "local-camera"
+    );
+    assert_eq!(
+        groups[0].credentials.as_ref().unwrap().password,
+        "local-group"
+    );
+    assert_eq!(
+        groups[0].device_credentials[&devices[0].addr].password,
+        "local-member"
+    );
+
+    settings_backup_fixture(true).merge_into(&mut global, &mut devices, &mut groups);
+    assert_eq!(global.password, "global-secret");
+    assert_eq!(
+        devices[0].credentials.as_ref().unwrap().password,
+        "camera-secret"
+    );
+    assert_eq!(
+        groups[0].credentials.as_ref().unwrap().password,
+        "group-secret"
+    );
+    assert_eq!(
+        groups[0].device_credentials[&devices[0].addr].password,
+        "member-secret"
+    );
+    assert_eq!(devices.len(), 2);
+    assert_eq!(groups.len(), 2);
+}
+
+fn settings_backup_fixture(include_credentials: bool) -> crate::persist::SettingsBackup {
+    let global = Credentials {
+        username: "admin".into(),
+        password: "global-secret".into(),
+    };
+    let device = crate::state::DeviceEntry {
+        name: "Camera".into(),
+        addr: "http://camera/onvif/device".into(),
+        display_addr: "camera".into(),
+        firmware: String::new(),
+        location: String::new(),
+        online: false,
+        auth_status: Default::default(),
+        manual: true,
+        credentials: Some(Credentials {
+            username: "camera-user".into(),
+            password: "camera-secret".into(),
+        }),
+        endpoint: String::new(),
+        clone_of: None,
+    };
+    let group = crate::state::HealthGroup {
+        id: "group-1".into(),
+        name: "Group".into(),
+        devices: vec![crate::state::HealthDeviceRef {
+            addr: device.addr.clone(),
+            ..Default::default()
+        }],
+        credentials: Some(Credentials {
+            username: "group-user".into(),
+            password: "group-secret".into(),
+        }),
+        device_credentials: std::collections::HashMap::from([(
+            device.addr.clone(),
+            Credentials {
+                username: "member-user".into(),
+                password: "member-secret".into(),
+            },
+        )]),
+    };
+    crate::persist::SettingsBackup::capture(
+        crate::persist::ConfigOut {
+            theme: "light".into(),
+            locale: "en".into(),
+            log_to_file: false,
+            tls_strict: true,
+            snapshot_dir: None,
+            recording_dir: None,
+            camera_item_size: 80,
+            sidebar_collapsed: true,
+            ptz_speed: 0.65,
+        },
+        &global,
+        &[device],
+        &[group],
+        vec!["http://camera/onvif/device|Profile_2".into()],
+        include_credentials,
+    )
+}
+
+#[test]
 fn capture_directories_accept_legacy_config_and_round_trip_custom_paths() {
     let mut config: crate::persist::ConfigFile = toml::from_str("theme = 'light'").unwrap();
     assert!(config.snapshot_dir.is_none());

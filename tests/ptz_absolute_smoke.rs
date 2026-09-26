@@ -29,6 +29,78 @@ mod state;
 use crate::state::Credentials;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn drag_pan_stops_when_pointer_updates_stop_before_release() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url().to_string();
+    let creds = Credentials::default();
+    server.inject_fault("Stop", "ter:ActionNotSupported", "idle-stop-observed");
+    let (updates, receiver) = tokio::sync::watch::channel((0.5, 0.0));
+    let worker = tokio::spawn(api::ptz_drag(
+        addr,
+        creds,
+        "Profile_1".to_string(),
+        receiver,
+    ));
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+        .await
+        .expect("an idle pointer must stop the camera without waiting for release")
+        .unwrap()
+        .unwrap_err();
+    assert!(error.contains("idle-stop-observed"), "{error}");
+    drop(updates);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn drag_pan_resumes_only_after_more_pointer_movement() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url().to_string();
+    let creds = Credentials::default();
+    let mut previous = api::ptz_get_status(&addr, &creds, "Profile_1")
+        .await
+        .unwrap()
+        .pan;
+    let (updates, receiver) = tokio::sync::watch::channel((0.0, 0.0));
+    let worker = tokio::spawn(api::ptz_drag(
+        addr.clone(),
+        creds.clone(),
+        "Profile_1".to_string(),
+        receiver,
+    ));
+
+    for _ in 0..2 {
+        updates.send((0.5, 0.0)).unwrap();
+        let moved = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let current = api::ptz_get_status(&addr, &creds, "Profile_1")
+                    .await
+                    .unwrap();
+                if current.pan != previous {
+                    break current.pan;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("fresh pointer movement must restart panning");
+        assert!((moved.unwrap() - previous.unwrap() - 0.025).abs() < 0.000001);
+        tokio::time::sleep(std::time::Duration::from_millis(375)).await;
+        let held = api::ptz_get_status(&addr, &creds, "Profile_1")
+            .await
+            .unwrap();
+        assert_eq!(held.pan, moved, "holding still must not issue another move");
+        previous = moved;
+    }
+
+    drop(updates);
+    tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn drag_pan_release_ends_motion_without_queued_commands() {
     let server = MockServer::start().await.unwrap();
     let addr = server.device_url().to_string();
@@ -154,7 +226,10 @@ async fn drag_pan_filters_jitter_without_losing_speed_changes_or_reversals() {
             .await
             .unwrap();
         }
-        tokio::time::sleep(std::time::Duration::from_millis(375)).await;
+        for _ in 0..5 {
+            updates.send(velocity).unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+        }
         let after = api::ptz_get_status(&addr, &creds, "Profile_1")
             .await
             .unwrap();

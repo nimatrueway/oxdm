@@ -10,10 +10,16 @@ oxvif 0.16.0, with the Rust 1.98 CI compatibility fix included.
   thumbnails. The collapsed state is remembered across restarts.
 - App settings for appearance, language, credentials, capture folders, TLS, and
   logging. Credentials remain in the system keychain.
+- Plain-JSON export/import for settings, cameras, groups, and hidden profiles.
+  Include credentials is unchecked by default; enabling it includes readable
+  credentials with no encryption or password prompt. Imports merge cameras/groups
+  after confirmation and keep local credentials when the backup omits them.
 - Compact PTZ and image controls share the live player. Diagnostics is under
   Settings; Settings and Recordings have back-to-video buttons.
+- One camera-settings wrench in the toolbar, distinct from the App Settings gear.
 - Hold-and-drag panning uses the same saved speed as the PTZ panel, suppresses
-  duplicate movement commands, and stops on release. An overlay compares the
+  duplicate movement commands, and stops when the pointer pauses or the button is
+  released. Further mouse movement resumes panning. An overlay compares the
   starting and current camera-reported position and remaining travel.
 - Snapshots save immediately to the configured folder with unique filenames.
   The recording folder is configurable too.

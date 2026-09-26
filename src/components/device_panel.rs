@@ -19,7 +19,7 @@ pub fn DevicePanel(gate: api::DeviceGate) -> Element {
         nav { class: "camera-actions",
             for (tab, icon, label, target) in [
                 (WorkspaceTab::Recordings, "clock", "nav_recordings", View::Recordings),
-                (WorkspaceTab::Settings, "settings", "nav_settings", View::DeviceSettings),
+                (WorkspaceTab::Settings, "wrench", "nav_settings", View::DeviceSettings),
             ] {
                 if tab != WorkspaceTab::Recordings || gate.recordings || active == Some(tab) {
                     button {
@@ -145,16 +145,6 @@ pub fn ProfileSelector(addr: ReadSignal<String>, creds: Memo<Credentials>) -> El
                         }
                     }
                 },
-            }
-            button {
-                class: "icon-btn",
-                title: i18n::t(locale, "workspace_profiles"),
-                aria_label: i18n::t(locale, "workspace_profiles"),
-                onclick: move |_| {
-                    ctx.settings_tab.clone().set(SettingsTab::Profiles);
-                    ctx.view.clone().set(View::DeviceSettings);
-                },
-                Icon { name: "settings", size: 15 }
             }
         }
     }

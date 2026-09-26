@@ -166,6 +166,16 @@ pub fn set_profile_hidden(addr: &str, token: &str, hidden: bool) {
     } else {
         set.remove(&key);
     }
+    write_hidden_profiles(set);
+}
+
+pub fn merge_hidden_profiles(keys: &[String]) {
+    let mut set = load_hidden_profiles();
+    set.extend(keys.iter().cloned());
+    write_hidden_profiles(set);
+}
+
+fn write_hidden_profiles(set: std::collections::HashSet<String>) {
     ensure_dir();
     let Some(path) = hidden_profiles_path() else {
         return;
@@ -622,21 +632,26 @@ fn keyring_load_all() -> CredsMap {
 }
 
 fn keyring_save_all(map: &CredsMap) {
-    let json = match serde_json::to_string(map) {
-        Ok(j) => j,
-        Err(e) => {
-            error!(error = %e, "Failed to serialize credentials");
-            return;
-        }
-    };
-    match keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
-        Ok(entry) => {
-            if let Err(e) = entry.set_password(&json) {
-                warn!(error = %e, "Keychain save failed, credentials not persisted");
-            }
-        }
-        Err(e) => warn!(error = %e, "Keychain entry creation failed"),
+    if let Err(error) = try_keyring_save_all(map) {
+        warn!(%error, "Keychain save failed, credentials not persisted");
     }
+}
+
+fn try_keyring_save_all(map: &CredsMap) -> Result<(), String> {
+    let json = serde_json::to_string(map).map_err(|error| error.to_string())?;
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|error| error.to_string())?
+        .set_password(&json)
+        .map_err(|error| error.to_string())
+}
+
+pub fn save_backup_credentials(
+    global: &Credentials,
+    devices: &[DeviceEntry],
+    groups: &[HealthGroup],
+) -> Result<(), &'static str> {
+    try_keyring_save_all(&build_creds_map(global, devices, groups))
+        .map_err(|_| "backup_keychain_error")
 }
 
 // Group credentials share the single keychain blob via reserved key prefixes.
@@ -804,7 +819,7 @@ pub fn load_devices(creds_map: &CredsMap) -> Vec<DeviceEntry> {
 
 // ── Save ────────────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigOut {
     pub theme: String,
     pub locale: String,
@@ -817,6 +832,178 @@ pub struct ConfigOut {
     pub camera_item_size: u16,
     pub sidebar_collapsed: bool,
     pub ptz_speed: f32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SettingsBackup {
+    pub version: u32,
+    pub preferences: ConfigOut,
+    pub devices: Vec<DeviceRecord>,
+    pub groups: Vec<HealthGroup>,
+    pub hidden_profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credentials: Option<CredsMap>,
+}
+
+impl SettingsBackup {
+    pub fn capture(
+        preferences: ConfigOut,
+        global: &Credentials,
+        devices: &[DeviceEntry],
+        groups: &[HealthGroup],
+        hidden_profiles: Vec<String>,
+        include_credentials: bool,
+    ) -> Self {
+        Self {
+            version: 1,
+            preferences,
+            devices: devices
+                .iter()
+                .filter(|device| device.clone_of.is_none())
+                .map(|device| DeviceRecord {
+                    name: device.name.clone(),
+                    addr: device.addr.clone(),
+                    has_credentials: device.credentials.is_some(),
+                })
+                .collect(),
+            groups: groups.to_vec(),
+            hidden_profiles,
+            credentials: include_credentials.then(|| build_creds_map(global, devices, groups)),
+        }
+    }
+
+    pub fn includes_credentials(&self) -> bool {
+        self.credentials.is_some()
+    }
+
+    pub fn merge_into(
+        &self,
+        global: &mut Credentials,
+        devices: &mut Vec<DeviceEntry>,
+        groups: &mut Vec<HealthGroup>,
+    ) {
+        let credential = |key: &str| {
+            self.credentials
+                .as_ref()
+                .and_then(|map| map.get(key))
+                .map(|(username, password)| Credentials {
+                    username: username.clone(),
+                    password: password.clone(),
+                })
+        };
+        if self.includes_credentials() {
+            *global = credential(CREDS_KEY_GLOBAL).unwrap_or_default();
+        }
+        for record in &self.devices {
+            if let Some(device) = devices
+                .iter_mut()
+                .find(|device| device.addr == record.addr && device.clone_of.is_none())
+            {
+                device.name = record.name.clone();
+                device.manual = true;
+                if self.includes_credentials() {
+                    device.credentials = credential(&record.addr);
+                }
+            } else {
+                devices.push(DeviceEntry {
+                    name: record.name.clone(),
+                    addr: record.addr.clone(),
+                    display_addr: crate::util::extract_ip(&record.addr),
+                    firmware: String::new(),
+                    location: String::new(),
+                    online: false,
+                    auth_status: Default::default(),
+                    manual: true,
+                    credentials: credential(&record.addr),
+                    endpoint: String::new(),
+                    clone_of: None,
+                });
+            }
+        }
+        for imported in &self.groups {
+            let existing = groups.iter().position(|group| group.id == imported.id);
+            let mut group = imported.clone();
+            group.credentials = None;
+            group.device_credentials.clear();
+            if self.includes_credentials() {
+                group.credentials = credential(&group_cred_key(&group.id));
+                for device in &group.devices {
+                    if let Some(creds) = credential(&group_device_cred_key(&group.id, &device.addr))
+                    {
+                        group.device_credentials.insert(device.addr.clone(), creds);
+                    }
+                }
+            } else if let Some(index) = existing {
+                group.credentials = groups[index].credentials.clone();
+                group.device_credentials = groups[index].device_credentials.clone();
+            }
+            if let Some(index) = existing {
+                groups[index] = group;
+            } else {
+                groups.push(group);
+            }
+        }
+    }
+
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.version != 1 {
+            return Err("backup_version_error");
+        }
+        let valid_addr = |addr: &str| {
+            url::Url::parse(addr).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+            })
+        };
+        if !self.preferences.ptz_speed.is_finite()
+            || self.devices.iter().any(|device| !valid_addr(&device.addr))
+            || self.groups.iter().any(|group| {
+                group.id.is_empty() || group.devices.iter().any(|device| !valid_addr(&device.addr))
+            })
+            || self.hidden_profiles.iter().any(|key| {
+                !key.split_once('|')
+                    .is_some_and(|(addr, _)| valid_addr(addr))
+            })
+        {
+            return Err("backup_invalid");
+        }
+        Ok(())
+    }
+}
+
+pub const MAX_BACKUP_BYTES: usize = 16 * 1024 * 1024;
+
+pub fn encode_settings_backup(backup: &SettingsBackup) -> Result<Vec<u8>, &'static str> {
+    backup.validate()?;
+    let bytes = serde_json::to_vec_pretty(backup).map_err(|_| "backup_invalid")?;
+    if bytes.len() > MAX_BACKUP_BYTES {
+        return Err("backup_too_large");
+    }
+    Ok(bytes)
+}
+
+pub fn decode_settings_backup(bytes: &[u8]) -> Result<SettingsBackup, &'static str> {
+    if bytes.len() > MAX_BACKUP_BYTES {
+        return Err("backup_too_large");
+    }
+    let backup: SettingsBackup = serde_json::from_slice(bytes).map_err(|_| "backup_invalid")?;
+    backup.validate()?;
+    Ok(backup)
+}
+
+pub fn read_settings_backup(path: &Path) -> Result<Vec<u8>, &'static str> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|_| "backup_file_error")?;
+    let mut bytes = Vec::new();
+    file.take(MAX_BACKUP_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "backup_file_error")?;
+    if bytes.len() > MAX_BACKUP_BYTES {
+        return Err("backup_too_large");
+    }
+    Ok(bytes)
 }
 
 pub fn save_config(cfg: ConfigOut) {

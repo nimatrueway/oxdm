@@ -8,9 +8,19 @@ Changelog tracking starts at 0.1.5.
 
 ## [0.6.1] - 2026-09-26
 
+### Added
+- Plain-JSON settings export/import in App Settings, covering preferences,
+  cameras, groups, and hidden profiles. Include credentials defaults off; when
+  checked, credentials are included without encryption or a backup password.
+  Confirmed imports merge cameras/groups and preserve omitted credentials.
+
 ### Fixed
 - Use fixed-size PCM sample chunks for the L16 byte swap, satisfying Rust 1.98
   Clippy without changing the decoded audio or incomplete-sample handling.
+- Hold-and-drag pan stops when mouse movement pauses, resumes on further movement,
+  and follows recent pointer direction rather than offset from the press point.
+- Remove the duplicate camera-settings shortcut and use a wrench for the remaining
+  toolbar control, distinguishing it from the App Settings gear.
 
 ---
 

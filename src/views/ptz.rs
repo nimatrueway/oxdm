@@ -6,7 +6,7 @@ use dioxus::prelude::*;
 
 struct PanGesture {
     pointer: i32,
-    origin: (f64, f64),
+    position: (f64, f64),
     speed: f32,
     updates: tokio::sync::watch::Sender<(f32, f32)>,
 }
@@ -98,7 +98,7 @@ pub fn DragPanButton(
                 preview.set(PanPreview { generation, active: true, before: None });
                 gesture.set(Some(PanGesture {
                     pointer: event.data().pointer_id(),
-                    origin: (position.x, position.y),
+                    position: (position.x, position.y),
                     speed: *speed.peek(),
                     updates,
                 }));
@@ -125,10 +125,14 @@ pub fn DragPanButton(
             },
             onpointermove: move |event: Event<PointerData>| {
                 event.stop_propagation();
-                if let Some(drag) = gesture.peek().as_ref() {
+                if let Some(drag) = gesture.write().as_mut() {
                     if event.data().pointer_id() == drag.pointer {
                         let position = event.data().client_coordinates();
-                        let _ = drag.updates.send(api::ptz_drag_velocity(position.x - drag.origin.0, position.y - drag.origin.1, drag.speed));
+                        let velocity = api::ptz_drag_velocity(position.x - drag.position.0, position.y - drag.position.1, drag.speed);
+                        if velocity != (0.0, 0.0) {
+                            drag.position = (position.x, position.y);
+                            let _ = drag.updates.send(velocity);
+                        }
                     }
                 }
             },

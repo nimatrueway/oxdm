@@ -1288,18 +1288,24 @@ pub async fn ptz_drag(
     let result: Result<(), ApiError> = async {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(125));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last_pointer_update = tokio::time::Instant::now();
         loop {
             tokio::select! {
                 changed = updates.changed() => {
                     if changed.is_err() {
                         break;
                     }
+                    last_pointer_update = tokio::time::Instant::now();
                 }
                 _ = interval.tick() => {
                     if updates.has_changed().is_err() {
                         break;
                     }
-                    let (pan, tilt) = *updates.borrow();
+                    let (pan, tilt) = if last_pointer_update.elapsed() < Duration::from_millis(200) {
+                        *updates.borrow()
+                    } else {
+                        (0.0, 0.0)
+                    };
                     if pan == 0.0 && tilt == 0.0 {
                         if moving {
                             ptz_stop(&addr, &creds, &profile_token).await?;
