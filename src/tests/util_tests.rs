@@ -1,5 +1,5 @@
 use crate::components::credentials_dialog::normalize_onvif_addr;
-use crate::util::{extract_ip, urldecode};
+use crate::util::{extract_ip, save_snapshot, urldecode};
 use crate::views::settings::identification::{scope_key, scope_value};
 use crate::views::settings::time::epoch_days_to_ymd;
 
@@ -128,4 +128,33 @@ fn epoch_days_known_date() {
 fn epoch_days_leap_year() {
     // 2024-02-29 is day 19723 + 59 = 19782
     assert_eq!(epoch_days_to_ymd(19782), (2024, 2, 29));
+}
+
+#[test]
+fn snapshot_saves_create_the_folder_without_overwriting_captures() -> std::io::Result<()> {
+    let root = std::env::temp_dir().join(format!(
+        "oxdm-snapshot-test-{}-{}",
+        std::process::id(),
+        time::OffsetDateTime::now_utc().unix_timestamp_nanos(),
+    ));
+    let directory = root.join("custom snapshots");
+    let first = save_snapshot(&directory, "camera/front:main", b"first capture")?;
+    let second = save_snapshot(&directory, "camera/front:main", b"second capture")?;
+
+    assert_ne!(first, second);
+    assert_eq!(first.parent(), Some(directory.as_path()));
+    assert_eq!(second.parent(), Some(directory.as_path()));
+    assert!(first
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("camera_front_main-"));
+    assert_eq!(std::fs::read(first)?, b"first capture");
+    assert_eq!(std::fs::read(second)?, b"second capture");
+
+    let blocked = root.join("not a directory");
+    std::fs::write(&blocked, b"existing file")?;
+    assert!(save_snapshot(&blocked, "camera", b"capture").is_err());
+    assert_eq!(std::fs::read(blocked)?, b"existing file");
+    std::fs::remove_dir_all(root)
 }

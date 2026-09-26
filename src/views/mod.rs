@@ -1,3 +1,4 @@
+pub mod app_settings;
 pub mod events;
 pub mod health_overview;
 pub mod imaging;

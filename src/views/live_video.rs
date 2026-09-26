@@ -1,8 +1,12 @@
 #![allow(non_snake_case)]
-use crate::components::Icon;
+use crate::components::{DevicePanel, Icon, ProfileSelector};
 use crate::i18n;
-use crate::state::{Credentials, Ctx};
+use crate::state::{Credentials, Ctx, View};
 use crate::video::{self, EmbedKind};
+use crate::views::{
+    imaging::ImagingView,
+    ptz::{DragPanButton, PanPositionOverlay, PanPreview, PtzControlView},
+};
 use dioxus::prelude::*;
 
 /// Which video backend a stage should use for the current view.
@@ -12,8 +16,7 @@ use dioxus::prelude::*;
 /// (intentionally not persisted yet — most users will pick once and
 /// stay).
 ///
-/// Reused by Imaging and PTZ so they can offer the same Snapshot/RTSP
-/// choice as the dedicated Live Video view.
+/// Shared by the live player and its inline camera controls.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LiveVideoMode {
     Snapshot,
@@ -30,10 +33,7 @@ impl LiveVideoMode {
     }
 }
 
-/// Reusable `<Snapshot | RTSP>` tab strip. The caller owns the `mode`
-/// signal and decides where to place this in its header. Designed to drop
-/// into Live Video, Imaging, and PTZ uniformly so users encounter the same
-/// affordance everywhere.
+/// Snapshot/RTSP choice inside the live player's playback options.
 #[component]
 pub fn LiveModeTabs(mode: Signal<LiveVideoMode>) -> Element {
     let ctx = use_context::<Ctx>();
@@ -62,20 +62,22 @@ pub fn LiveModeTabs(mode: Signal<LiveVideoMode>) -> Element {
     }
 }
 
-/// Live video panel — full view with header.
-///
-/// Tab strip lets the user choose between Snapshot mode (the
-/// always-available MJPEG polling backend, ~5–10 fps) and RTSP mode
-/// (native RTSP client → WebCodecs, real frame rate + audio).
-///
-/// `LiveVideoStage` is reusable elsewhere (Imaging preview), but
-/// embedded uses pin to Snapshot — the tab strip lives here only.
+/// Live player with profile selection and optional camera controls.
 #[component]
-pub fn LiveVideoView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Element {
+pub fn LiveVideoView(
+    addr: ReadSignal<String>,
+    creds: Memo<Credentials>,
+    gate: crate::api::DeviceGate,
+) -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
     let mode = use_signal(LiveVideoMode::default);
+    let ptz_speed = ctx.ptz_speed;
+    let pan_preview = use_signal(PanPreview::default);
     let profile_sig = ctx.selected_profile;
+    let active_view = *ctx.view.read();
+    let controls_open = matches!(active_view, View::PtzControl | View::ImagingSettings);
+    let profile_key = profile_sig.read().clone().unwrap_or_default();
 
     // Memo so LiveVideoStage's use_resource sees the backend choice
     // as a reactive dep — Dioxus only re-runs a resource when signals
@@ -124,13 +126,41 @@ pub fn LiveVideoView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elem
 
     rsx! {
         div { class: "live-video-view",
-            div { class: "content-header",
-                Icon { name: "video", size: 20 }
-                span { class: "content-title", {i18n::t(locale, "nav_live_video")} }
-                LiveModeTabs { mode }
-                if let Some(name) = backend_display {
-                    span { class: "live-video-backend",
-                        " · {name}"
+            div { class: "content-header live-toolbar",
+                ProfileSelector { addr, creds }
+                for (target, available, icon, label) in [
+                    (View::PtzControl, gate.ptz, "crosshair", "workspace_ptz"),
+                    (View::ImagingSettings, gate.imaging, "sliders", "workspace_adjustments"),
+                ] {
+                    if available || active_view == target {
+                        button {
+                            class: if active_view == target { "icon-btn live-control-toggle live-control-toggle--active" } else { "icon-btn live-control-toggle" },
+                            title: i18n::t(locale, label),
+                            aria_label: i18n::t(locale, label),
+                            aria_expanded: active_view == target,
+                            aria_controls: "live-camera-controls",
+                            disabled: !can_save,
+                            onclick: move |_| ctx.view.clone().set(if active_view == target { View::LiveVideo } else { target }),
+                            Icon { name: icon, size: 15 }
+                        }
+                    }
+                }
+                if gate.ptz {
+                    DragPanButton { addr, creds, speed: ptz_speed, preview: pan_preview, enabled: can_save }
+                }
+                details { class: "playback-options",
+                    summary {
+                        class: "icon-btn",
+                        title: i18n::t(locale, "workspace_playback"),
+                        aria_label: i18n::t(locale, "workspace_playback"),
+                        Icon { name: "video", size: 16 }
+                    }
+                    div { class: "playback-options-body",
+                        span { {i18n::t(locale, "workspace_playback")} }
+                        LiveModeTabs { mode }
+                        if let Some(name) = backend_display {
+                            span { class: "live-video-backend", "{name}" }
+                        }
                     }
                 }
                 button {
@@ -142,7 +172,8 @@ pub fn LiveVideoView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elem
                         let addr = addr.read().clone();
                         let creds = creds.read().clone();
                         let toast_ctx = ctx;
-                        let default_name = format!("{}.jpg", crate::util::sanitize_filename(&token));
+                        let directory = crate::persist::snapshot_directory(ctx.snapshot_dir.read().as_deref());
+                        let name = format!("{}-{token}", crate::util::extract_ip(&addr));
                         let saved_label = i18n::t(locale, "snapshot_saved").to_string();
                         let failed_label = i18n::t(locale, "snapshot_save_failed").to_string();
                         spawn(async move {
@@ -168,23 +199,14 @@ pub fn LiveVideoView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elem
                                     }
                                 }
                             };
-                            let Some(handle) = rfd::AsyncFileDialog::new()
-                                .set_file_name(&default_name)
-                                .add_filter("JPEG", &["jpg", "jpeg"])
-                                .save_file()
-                                .await
-                            else {
-                                return;
-                            };
-                            let path = handle.path().to_path_buf();
                             match bytes {
-                                Some(bytes) => match std::fs::write(&path, &bytes) {
-                                    Ok(()) => {
+                                Some(bytes) => match crate::util::save_snapshot(&directory, &name, &bytes) {
+                                    Ok(path) => {
                                         tracing::info!(path = %path.display(), bytes = bytes.len(), "live snapshot saved");
                                         toast_ctx.push_toast(crate::state::ToastLevel::Success, format!("{}: {}", saved_label, path.display()));
                                     }
                                     Err(e) => {
-                                        tracing::warn!(error = %e, path = %path.display(), "live snapshot save failed");
+                                        tracing::warn!(error = %e, directory = %directory.display(), "live snapshot save failed");
                                         toast_ctx.push_toast(crate::state::ToastLevel::Error, format!("{failed_label}: {e}"));
                                     }
                                 },
@@ -206,6 +228,7 @@ pub fn LiveVideoView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elem
                     onclick: move |_| {
                         let id = stream_id.read().clone();
                         let toast_ctx = ctx;
+                        let directory = crate::persist::recording_directory(ctx.recording_dir.read().as_deref());
                         let saved_label = i18n::t(locale, "record_saved").to_string();
                         let failed_label = i18n::t(locale, "record_failed").to_string();
                         let base = format!(
@@ -221,11 +244,7 @@ pub fn LiveVideoView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elem
                                 }
                                 rec_elapsed.set(None);
                             } else {
-                                let dir = dirs::video_dir()
-                                    .or_else(dirs::home_dir)
-                                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                                    .join("OxDM");
-                                match video::rtsp::start_recording(&id, &dir, &base) {
+                                match video::rtsp::start_recording(&id, &directory, &base) {
                                     Ok(_) => rec_elapsed.set(Some(0)),
                                     Err(e) => toast_ctx.push_toast(crate::state::ToastLevel::Error, format!("{failed_label}: {e}")),
                                 }
@@ -264,12 +283,36 @@ pub fn LiveVideoView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elem
                     },
                     Icon { name: "pip", size: 16 }
                 }
+                DevicePanel { gate }
             }
 
-            LiveVideoStage {
-                addr,
-                creds,
-                backend_id: Some(backend_id.into()),
+            div { class: if controls_open { "live-workbench live-workbench--controls" } else { "live-workbench" },
+                div { class: "live-feed",
+                    LiveVideoStage {
+                        addr,
+                        creds,
+                        backend_id: Some(backend_id.into()),
+                    }
+                    if gate.ptz {
+                        PanPositionOverlay { key: "{profile_key}", addr, creds, preview: pan_preview }
+                    }
+                }
+                if controls_open {
+                    aside { class: "live-controls", id: "live-camera-controls",
+                        button {
+                            class: "icon-btn live-controls-close",
+                            title: i18n::t(locale, "workspace_close_controls"),
+                            aria_label: i18n::t(locale, "workspace_close_controls"),
+                            onclick: move |_| ctx.view.clone().set(View::LiveVideo),
+                            Icon { name: "x", size: 16 }
+                        }
+                        if active_view == View::PtzControl {
+                            PtzControlView { key: "{profile_key}", addr, creds, speed: ptz_speed }
+                        } else {
+                            ImagingView { key: "{profile_key}", addr, creds, show_encoder: false }
+                        }
+                    }
+                }
             }
         }
     }
@@ -310,8 +353,7 @@ fn ModeTab(
 ///
 /// `backend` is optional. `None` is the implicit default (current
 /// installed backend = MJPEG); embedded users that want a specific
-/// backend pass `Some(...)`. Re-using this from Imaging keeps the
-/// preview consistent with Live Video.
+/// backend pass `Some(...)`.
 #[component]
 pub fn LiveVideoStage(
     addr: ReadSignal<String>,

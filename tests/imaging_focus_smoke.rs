@@ -27,6 +27,102 @@ mod state;
 use crate::state::Credentials;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn unsupported_snapshot_uri_is_remembered_for_its_profile() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url();
+    let creds = Credentials::default();
+    server.inject_fault("GetSnapshotUri", "SOAP-ENV:Receiver", "");
+
+    let first = api::get_snapshot_uri(addr, &creds, "Profile_1")
+        .await
+        .unwrap_err();
+    let repeated = api::get_snapshot_uri(addr, &creds, "Profile_1")
+        .await
+        .expect_err("an unsupported snapshot must not be probed again");
+    assert_eq!(repeated, first);
+    assert!(api::get_snapshot_uri(addr, &creds, "Profile_2")
+        .await
+        .is_ok());
+    assert!(api::imaging_get_status(addr, &creds, "VS_1").await.is_ok());
+
+    sessions::invalidate(addr);
+    assert!(api::get_snapshot_uri(addr, &creds, "Profile_1")
+        .await
+        .is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unsupported_imaging_status_is_remembered_for_its_source() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url();
+    let creds = Credentials::default();
+    server.inject_fault(
+        "GetStatus",
+        "ter:ActionNotSupported",
+        "Status not supported",
+    );
+
+    let first = api::imaging_get_status(addr, &creds, "VS_1")
+        .await
+        .unwrap_err();
+    let repeated = api::imaging_get_status(addr, &creds, "VS_1")
+        .await
+        .expect_err("unsupported imaging status must not be probed again");
+    assert_eq!(repeated, first);
+    assert!(api::imaging_get_status(addr, &creds, "VS_2").await.is_ok());
+    assert!(api::get_snapshot_uri(addr, &creds, "Profile_1")
+        .await
+        .is_ok());
+
+    sessions::invalidate(addr);
+    assert!(api::imaging_get_status(addr, &creds, "VS_1").await.is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unsupported_optional_operations_share_concurrent_probes() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url();
+    let creds = Credentials::default();
+
+    server.inject_fault("GetSnapshotUri", "ter:ActionNotSupported", "");
+    let (first, concurrent) = tokio::join!(
+        api::get_snapshot_uri(addr, &creds, "Profile_1"),
+        api::get_snapshot_uri(addr, &creds, "Profile_1"),
+    );
+    assert_eq!(first.unwrap_err(), concurrent.unwrap_err());
+
+    server.inject_fault("GetStatus", "SOAP-ENV:Receiver", "");
+    let (first, concurrent) = tokio::join!(
+        api::imaging_get_status(addr, &creds, "VS_1"),
+        api::imaging_get_status(addr, &creds, "VS_1"),
+    );
+    assert_eq!(first.unwrap_err(), concurrent.unwrap_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn optional_operations_retry_transient_and_authorization_faults() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url();
+    let creds = Credentials::default();
+    for (code, reason) in [
+        ("s:Receiver", "Device busy"),
+        ("ter:NotAuthorized", "Operation not supported for this user"),
+    ] {
+        server.inject_fault("GetSnapshotUri", code, reason);
+        assert!(api::get_snapshot_uri(addr, &creds, "Profile_1")
+            .await
+            .is_err());
+        assert!(api::get_snapshot_uri(addr, &creds, "Profile_1")
+            .await
+            .is_ok());
+
+        server.inject_fault("GetStatus", code, reason);
+        assert!(api::imaging_get_status(addr, &creds, "VS_1").await.is_err());
+        assert!(api::imaging_get_status(addr, &creds, "VS_1").await.is_ok());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn focus_speed_comes_from_what_the_lens_declared() {
     let server = MockServer::start().await.expect("mock server boots");
     let addr = server.device_url().to_string();

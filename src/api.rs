@@ -589,6 +589,66 @@ pub async fn get_profiles(addr: &str, creds: &Credentials) -> Result<Vec<MediaPr
     trace_result("GetProfiles", addr, s.get_profiles().await)
 }
 
+pub(crate) fn is_optional_operation_unsupported(error: &oxvif::OnvifError) -> bool {
+    let oxvif::OnvifError::Soap(oxvif::soap::SoapError::Fault {
+        code,
+        subcode,
+        reason,
+        ..
+    }) = error
+    else {
+        return false;
+    };
+    let code = subcode
+        .as_deref()
+        .unwrap_or(code)
+        .rsplit(':')
+        .next()
+        .unwrap_or_default();
+    match code {
+        "ActionNotSupported" | "OptionalActionNotImplemented" => true,
+        "Receiver" | "Sender" => {
+            let reason = reason.trim().to_ascii_lowercase();
+            reason.contains("not implemented")
+                || reason.contains("not supported")
+                || (code == "Receiver" && reason.is_empty())
+        }
+        _ => false,
+    }
+}
+
+async fn optional_operation<T, Request>(
+    addr: &str,
+    creds: &Credentials,
+    method: &'static str,
+    token: &str,
+    request: impl FnOnce(Arc<OnvifSession>) -> Request,
+) -> Result<T, ApiError>
+where
+    Request: std::future::Future<Output = Result<T, oxvif::OnvifError>>,
+{
+    let (username, password) = creds.as_options();
+    let support = sessions::operation_support(addr, username, password, method, token);
+    let mut support = support.lock().await;
+    if let sessions::OperationSupport::Unsupported(error) = &*support {
+        return Err(error.clone());
+    }
+
+    let session = session_for(addr, creds).await?;
+    let result = request(session).await;
+    match &result {
+        Ok(_) => *support = sessions::OperationSupport::Supported,
+        Err(error) if is_optional_operation_unsupported(error) => {
+            let error = error.to_string();
+            debug!(method, addr, token, %error, "Optional operation unsupported; skipping further probes");
+            *support = sessions::OperationSupport::Unsupported(error.clone());
+            return Err(error);
+        }
+        Err(_) => {}
+    }
+    trace_result(method, addr, result)
+}
+
 /// Fetch snapshot URI for a specific profile.
 #[instrument(skip(creds), fields(addr, profile_token))]
 pub async fn get_snapshot_uri(
@@ -596,12 +656,14 @@ pub async fn get_snapshot_uri(
     creds: &Credentials,
     profile_token: &str,
 ) -> Result<SnapshotUri, ApiError> {
-    let s = session_for(addr, creds).await?;
-    trace_result(
-        "GetSnapshotUri",
+    optional_operation(
         addr,
-        s.get_snapshot_uri(profile_token).await,
+        creds,
+        "GetSnapshotUri",
+        profile_token,
+        |session| async move { session.get_snapshot_uri(profile_token).await },
     )
+    .await
 }
 
 /// Extract the scheme + authority of an ONVIF device address — used as the
@@ -1117,12 +1179,14 @@ pub async fn imaging_get_status(
     creds: &Credentials,
     source_token: &str,
 ) -> Result<oxvif::ImagingStatus, ApiError> {
-    let s = session_for(addr, creds).await?;
-    trace_result(
-        "GetImagingStatus",
+    optional_operation(
         addr,
-        s.imaging_get_status(source_token).await,
+        creds,
+        "GetImagingStatus",
+        source_token,
+        |session| async move { session.imaging_get_status(source_token).await },
     )
+    .await
 }
 
 /// Map the UI's speed slider onto the device's declared continuous focus speed
@@ -1174,6 +1238,7 @@ pub async fn ptz_continuous_move(
     tilt: f32,
     zoom: f32,
 ) -> Result<(), ApiError> {
+    tracing::debug!(pan, tilt, zoom, profile_token, "PTZ movement requested");
     let s = session_for(addr, creds).await?;
     trace_result(
         "PTZ ContinuousMove",
@@ -1190,6 +1255,77 @@ pub async fn ptz_stop(
 ) -> Result<(), ApiError> {
     let s = session_for(addr, creds).await?;
     trace_result("PTZ Stop", addr, s.ptz_stop(profile_token).await)
+}
+
+pub fn ptz_drag_velocity(horizontal: f64, vertical: f64, speed: f32) -> (f32, f32) {
+    let axis_velocity = |delta: f64, orthogonal: f64| {
+        if delta.abs() <= 4.0 || delta.abs() <= orthogonal.abs() * 0.25 {
+            0.0
+        } else {
+            delta.signum() as f32 * speed
+        }
+    };
+    (
+        axis_velocity(horizontal, vertical),
+        axis_velocity(-vertical, horizontal),
+    )
+}
+
+#[instrument(skip(creds, updates), fields(addr, profile_token))]
+pub async fn ptz_drag(
+    addr: String,
+    creds: Credentials,
+    profile_token: String,
+    mut updates: tokio::sync::watch::Receiver<(f32, f32)>,
+) -> Result<(), ApiError> {
+    let mut moving = false;
+    let mut last_velocity = (0.0_f32, 0.0_f32);
+    let axis_changed = |previous: f32, current: f32| {
+        (previous == 0.0) != (current == 0.0)
+            || previous * current < 0.0
+            || (previous - current).abs() >= 0.1
+    };
+    let result: Result<(), ApiError> = async {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(125));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                changed = updates.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                }
+                _ = interval.tick() => {
+                    if updates.has_changed().is_err() {
+                        break;
+                    }
+                    let (pan, tilt) = *updates.borrow();
+                    if pan == 0.0 && tilt == 0.0 {
+                        if moving {
+                            ptz_stop(&addr, &creds, &profile_token).await?;
+                            moving = false;
+                            last_velocity = (0.0, 0.0);
+                        }
+                    } else if !moving
+                        || axis_changed(last_velocity.0, pan)
+                        || axis_changed(last_velocity.1, tilt)
+                    {
+                        moving = true;
+                        ptz_continuous_move(&addr, &creds, &profile_token, pan, tilt, 0.0).await?;
+                        last_velocity = (pan, tilt);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    .await;
+    if moving {
+        let stopped = ptz_stop(&addr, &creds, &profile_token).await;
+        result.and(stopped)
+    } else {
+        result
+    }
 }
 
 /// Where the head is now, and whether it is moving.
@@ -1269,6 +1405,16 @@ impl PtzAbsoluteLimits {
     pub fn is_empty(&self) -> bool {
         self.pan.is_none() && self.tilt.is_none() && self.zoom.is_none()
     }
+}
+
+pub(crate) fn ptz_axis_fraction(position: Option<f32>, limits: Option<(f32, f32)>) -> Option<f64> {
+    let position = f64::from(position?);
+    let (minimum, maximum) = limits?;
+    let (minimum, maximum) = (f64::from(minimum), f64::from(maximum));
+    if !position.is_finite() || !minimum.is_finite() || !maximum.is_finite() || minimum >= maximum {
+        return None;
+    }
+    Some(((position - minimum) / (maximum - minimum)).clamp(0.0, 1.0))
 }
 
 /// Pull the absolute position ranges out of a node's declared spaces.

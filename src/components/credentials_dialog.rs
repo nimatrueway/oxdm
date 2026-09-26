@@ -1,80 +1,54 @@
 #![allow(non_snake_case)]
-use crate::components::{DialogOverlay, PasswordField};
+use crate::components::{CredentialsFields, DialogOverlay, Icon};
 use crate::i18n;
 use crate::state::{Credentials, Ctx, ToastLevel, View};
 use crate::util;
 use dioxus::prelude::*;
 
-/// Modal for editing the global (default) credentials.
+/// App-wide default credentials, saved explicitly to the existing keychain flow.
 #[component]
-pub fn GlobalCredentialsDialog(open: Signal<bool>) -> Element {
+pub fn DefaultCredentialsForm() -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
-
-    // Hooks MUST be called unconditionally (before early returns)
-    let creds = ctx.global_credentials.read();
-    let mut username = use_signal(|| creds.username.clone());
-    let password = use_signal(|| creds.password.clone());
-    drop(creds);
-
-    let is_open = *open.read();
-    if !is_open {
-        return rsx! {};
-    }
-
-    let mut open_sig = open;
-    let mut global_creds = ctx.global_credentials;
+    let saved = ctx.global_credentials.read().clone();
+    let mut username = use_signal(|| saved.username.clone());
+    let mut password = use_signal(|| saved.password.clone());
+    use_effect(move || {
+        let saved = ctx.global_credentials.read();
+        username.set(saved.username.clone());
+        password.set(saved.password.clone());
+    });
+    let dirty = *username.read() != saved.username || *password.read() != saved.password;
 
     rsx! {
-        DialogOverlay {
-            on_close: move |_| open_sig.set(false),
-            inner_class: "dialog".to_string(),
-            div { class: "dialog-header",
-                span { class: "dialog-title", {i18n::t(locale, "cred_global_title")} }
+        div { class: "default-credentials-form",
+            CredentialsFields { username, password, locale }
+            div { class: "app-settings-actions",
+                button {
+                    class: "btn btn-sm btn-ghost",
+                    disabled: !dirty,
+                    onclick: move |_| {
+                        let saved = ctx.global_credentials.peek();
+                        username.set(saved.username.clone());
+                        password.set(saved.password.clone());
+                    },
+                    {i18n::t(locale, "btn_cancel")}
+                }
+                button {
+                    class: "btn btn-sm btn-primary",
+                    disabled: !dirty,
+                    onclick: move |_| {
+                        ctx.global_credentials.clone().set(Credentials {
+                            username: username.peek().clone(),
+                            password: password.peek().clone(),
+                        });
+                        crate::sessions::invalidate_all();
+                        ctx.push_toast(ToastLevel::Success, i18n::t(locale, "cred_saved"));
+                    },
+                    Icon { name: "check", size: 14 }
+                    {i18n::t(locale, "btn_save")}
+                }
             }
-                div { class: "dialog-body",
-                    p { class: "dialog-hint", {i18n::t(locale, "cred_global_hint")} }
-                    div { class: "form-field",
-                        label { class: "form-label", {i18n::t(locale, "cred_username")} }
-                        input {
-                            class: "form-input",
-                            r#type: "text",
-                            placeholder: i18n::t(locale, "cred_username"),
-                            value: "{username}",
-                            oninput: move |e| username.set(e.value()),
-                        }
-                    }
-                    div { class: "form-field",
-                        label { class: "form-label", {i18n::t(locale, "cred_password")} }
-                        PasswordField {
-                            value: password,
-                            placeholder: i18n::t(locale, "cred_password"),
-                        }
-                    }
-                }
-                div { class: "dialog-footer",
-                    button {
-                        class: "btn btn-md btn-ghost",
-                        onclick: move |_| open_sig.set(false),
-                        {i18n::t(locale, "btn_cancel")}
-                    }
-                    button {
-                        class: "btn btn-md btn-primary",
-                        onclick: move |_| {
-                            global_creds.set(Credentials {
-                                username: username.peek().clone(),
-                                password: password.peek().clone(),
-                            });
-                            // Global creds changed: every cached session built
-                            // under the old creds is now stale. Drop them all
-                            // so the next API call rebuilds with the new creds.
-                            crate::sessions::invalidate_all();
-                            ctx.push_toast(ToastLevel::Success, i18n::t(locale, "cred_saved"));
-                            open_sig.set(false);
-                        },
-                        {i18n::t(locale, "btn_save")}
-                    }
-                }
         }
     }
 }
@@ -203,7 +177,7 @@ pub fn AddDeviceDialog(open: Signal<bool>) -> Element {
                             let new_idx = devs.len() - 1;
                             drop(devs);
                             selected.set(Some(new_idx));
-                            view.set(View::DeviceSettings);
+                            view.set(View::LiveVideo);
                             ctx.push_toast(ToastLevel::Info, i18n::t(locale, "add_device_ok"));
                             crate::device_ops::reverify_device(ctx, devices, new_idx);
                             open_sig.set(false);

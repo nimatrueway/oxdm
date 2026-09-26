@@ -81,8 +81,16 @@ fn lock_aspect(width: u32, height: u32) {
 
 /// Open `source` in a new floating window titled `title`.
 pub fn open(source: VideoSource, title: String) {
+    let main_window = std::rc::Rc::downgrade(&dioxus::desktop::window());
     let props = PipWindowProps {
         source: source.clone(),
+        return_to_main: EventHandler::new(move |_| {
+            if let Some(main_window) = main_window.upgrade() {
+                main_window.window.set_minimized(false);
+                main_window.window.set_visible(true);
+                main_window.window.set_focus();
+            }
+        }),
     };
     let dom = VirtualDom::new_with_props(PipWindow, props);
     let cfg = dioxus::desktop::Config::new()
@@ -121,7 +129,7 @@ fn hide_chrome(builder: dioxus::desktop::WindowBuilder) -> dioxus::desktop::Wind
 }
 
 #[component]
-fn PipWindow(source: VideoSource) -> Element {
+fn PipWindow(source: VideoSource, return_to_main: EventHandler) -> Element {
     use_future(|| async {
         let mut sizes = document::eval(SIZE_SCRIPT);
         let mut last = None;
@@ -139,12 +147,16 @@ fn PipWindow(source: VideoSource) -> Element {
         div {
             class: "pip-root",
             onmousedown: move |e| {
+                if e.data().trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary) {
+                    return;
+                }
                 let c = e.data().client_coordinates();
                 let window = dioxus::desktop::window();
-                let size = window.window.inner_size();
                 let scale = window.window.scale_factor();
-                let (w, h) = (f64::from(size.width) / scale, f64::from(size.height) / scale);
-                let near_edge = c.x < EDGE_PX || c.y < EDGE_PX || c.x > w - EDGE_PX || c.y > h - EDGE_PX;
+                let size = window.webview.bounds()
+                    .map(|bounds| bounds.size.to_logical::<f64>(scale))
+                    .unwrap_or_else(|_| window.window.inner_size().to_logical::<f64>(scale));
+                let near_edge = c.x < EDGE_PX || c.y < EDGE_PX || c.x > size.width - EDGE_PX || c.y > size.height - EDGE_PX;
                 if !near_edge {
                     window.drag();
                 }
@@ -164,7 +176,10 @@ fn PipWindow(source: VideoSource) -> Element {
                 class: "pip-close",
                 title: "Close",
                 onmousedown: move |e| e.stop_propagation(),
-                onclick: move |_| dioxus::desktop::window().close(),
+                onclick: move |_| {
+                    dioxus::desktop::window().close();
+                    return_to_main.call(());
+                },
                 Icon { name: "x", size: 14 }
             }
         }

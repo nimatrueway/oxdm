@@ -1,13 +1,16 @@
 #![allow(non_snake_case)]
 use crate::components::Icon;
 use crate::state::{Credentials, Ctx, ToastLevel};
-use crate::views::live_video::{LiveModeTabs, LiveVideoMode, LiveVideoStage};
 use crate::views::video_encoder::VideoEncoderSection;
 use crate::{api, i18n};
 use dioxus::prelude::*;
 
 #[component]
-pub fn ImagingView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Element {
+pub fn ImagingView(
+    addr: ReadSignal<String>,
+    creds: Memo<Credentials>,
+    #[props(default = true)] show_encoder: bool,
+) -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
     let profile_token = ctx.selected_profile.read().clone();
@@ -50,29 +53,11 @@ pub fn ImagingView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elemen
     let focus_far_limit = use_signal(|| 0.0f32);
     let initialized = use_signal(|| false);
 
-    // Per-view backend choice — same Snapshot/RTSP toggle as Live Video,
-    // independent state so a user who's running RTSP in Imaging can
-    // still keep PTZ on Snapshot, etc.
-    let preview_mode = use_signal(LiveVideoMode::default);
-    let preview_backend_id = use_memo(move || preview_mode.read().backend_id());
-
     rsx! {
         div { class: "imaging-view",
             div { class: "content-header",
                 Icon { name: "sliders", size: 20 }
                 span { class: "content-title", {i18n::t(locale, "nav_imaging")} }
-                LiveModeTabs { mode: preview_mode }
-            }
-            // Live preview at the top so adjustments are visible without
-            // jumping back to the LiveVideo view. Reuses the same backend
-            // pipeline; the snapshot loop refreshes ~5 fps, so the user sees
-            // the camera's response within a second of pressing Apply.
-            div { class: "imaging-preview",
-                LiveVideoStage {
-                    addr,
-                    creds,
-                    backend_id: Some(preview_backend_id.into()),
-                }
             }
             div { class: "imaging-body",
                 match &*data.read_unchecked() {
@@ -242,7 +227,9 @@ pub fn ImagingView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elemen
                         }
                     },
                 }
-                VideoEncoderSection { addr, creds }
+                if show_encoder {
+                    VideoEncoderSection { addr, creds }
+                }
             }
         }
     }

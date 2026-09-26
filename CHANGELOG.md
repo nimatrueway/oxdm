@@ -6,6 +6,41 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.0] - 2026-09-26
+
+A camera-first workspace with shared live-video controls and remembered
+optional ONVIF operation support. Built on oxvif 0.16.0.
+
+### Added
+- Two-pane workspace with a collapsible, resizable camera sidebar, camera
+  thumbnails, and configurable thumbnail size.
+- App settings for appearance, language, credentials, capture folders, TLS,
+  logging, and About.
+- Hold-and-drag panning beside Playback options, with a crosshair cursor and
+  camera-reported before/current position and remaining-travel overlay.
+- Persistent PTZ speed shared by the PTZ panel and drag control, plus persistent
+  camera-list collapse state.
+- Configurable snapshot and recording folders; snapshots save directly with
+  unique filenames instead of opening a save dialog.
+
+### Changed
+- PTZ and image adjustments share the live player in compact controls.
+- Diagnostics now lives under Settings, with Health, Events, and Quirks subtabs.
+- Settings and Recordings open from the video toolbar and include back-to-video
+  buttons; the redundant camera header and global topbar are removed.
+- Closing PiP restores the main window; empty PiP toolbar areas remain draggable.
+
+### Fixed
+- Drag panning uses the PTZ panel's fixed speed and suppresses duplicate or
+  jitter-only movement commands while preserving reversals and release Stop.
+- Unsupported `GetSnapshotUri` and `GetImagingStatus` operations are learned per
+  camera, credentials, and profile/video source. Concurrent probes share the
+  unsupported result, avoiding repeated SOAP failures. Transient and
+  authentication faults remain retryable; session invalidation clears decisions.
+- CI prepares the patched retina dependency before compiling a fresh checkout.
+
+---
+
 ## [0.5.0] - 2026-09-26
 
 The go2rtc sidecar is gone. Live video is now an in-process RTSP pipeline

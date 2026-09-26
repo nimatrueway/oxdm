@@ -1,5 +1,8 @@
 //! Shared utility functions.
 
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+
 /// A local-time filename stamp, `YYYYMMDD-HHMMSS` — for export filenames so the
 /// user never has to rename (health reports and quirk exports share it). Falls
 /// back to UTC if the local offset can't be determined.
@@ -377,6 +380,32 @@ pub fn decode_jpeg_data_uri(uri: &str) -> Option<Vec<u8>> {
         .strip_prefix("data:image/jpeg;base64,")
         .or_else(|| uri.strip_prefix("data:image/jpg;base64,"))?;
     STANDARD.decode(payload).ok()
+}
+
+pub fn save_snapshot(directory: &Path, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(directory)?;
+    let stem = format!("{}-{}", sanitize_filename(name), now_file_stamp());
+    let mut sequence = 0;
+    loop {
+        let suffix = if sequence == 0 {
+            String::new()
+        } else {
+            format!("-{sequence}")
+        };
+        let path = directory.join(format!("{stem}{suffix}.jpg"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(bytes)?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => sequence += 1,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cfg(test)]

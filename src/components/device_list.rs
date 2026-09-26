@@ -2,8 +2,7 @@
 use crate::{
     api,
     components::{
-        AddDeviceDialog, AddToGroupDialog, ContextMenu, CtxMenuItem, EditDeviceDialog,
-        GlobalCredentialsDialog, Icon,
+        AddDeviceDialog, AddToGroupDialog, ContextMenu, CtxMenuItem, EditDeviceDialog, Icon,
     },
     i18n,
     state::{
@@ -149,18 +148,16 @@ pub fn DeviceList() -> Element {
     let locale = *ctx.locale.read();
     let mut filter = use_signal(String::new);
     let mut add_dialog_open = use_signal(|| false);
-    let mut creds_open = use_signal(|| false);
     let edit_dialog_open = use_signal(|| false);
     let edit_device_idx: Signal<Option<usize>> = use_signal(|| None);
     let picker_open = use_signal(|| false);
     let picker_device_idx: Signal<Option<usize>> = use_signal(|| None);
     let mut status_filter = use_signal(|| StatusFilter::All);
     let mut sort_by = use_signal(|| SortBy::Default);
-
-    let creds = ctx.global_credentials.read();
-    let creds_empty = creds.username.is_empty();
-    let creds_username = creds.username.clone();
-    drop(creds);
+    let mut filters_open = use_signal(|| false);
+    let mut sidebar_collapsed = ctx.sidebar_collapsed;
+    let mut sidebar_width = use_signal(|| 240.0_f64);
+    let mut resize_start = use_signal(|| None::<(f64, f64, f64)>);
 
     let mut scanning = ctx.scanning;
     let mut selected = ctx.selected;
@@ -344,8 +341,9 @@ pub fn DeviceList() -> Element {
         };
         match action {
             crate::state::GlobalKey::FocusSearch => {
+                sidebar_collapsed.set(false);
                 let _ = document::eval(
-                    "const el = document.getElementById('device-list-filter'); if (el) el.focus();",
+                    "requestAnimationFrame(() => document.getElementById('device-list-filter')?.focus());",
                 );
             }
             crate::state::GlobalKey::Scan => {
@@ -386,6 +384,7 @@ pub fn DeviceList() -> Element {
                     _ => return,
                 };
                 ctx.selected.clone().set(Some(visible[new_pos]));
+                ctx.view.clone().set(View::LiveVideo);
             }
         }
         keyboard_action_sig.set(None);
@@ -398,6 +397,15 @@ pub fn DeviceList() -> Element {
 
     let active_status = *status_filter.read();
     let active_sort = *sort_by.read();
+    let filters_active = active_status != StatusFilter::All || active_sort != SortBy::Default;
+    let filters_label = i18n::t(
+        locale,
+        if filters_active {
+            "filter_controls_active"
+        } else {
+            "filter_controls"
+        },
+    );
 
     let mut filtered: Vec<(usize, &DeviceEntry)> = devs
         .iter()
@@ -420,22 +428,10 @@ pub fn DeviceList() -> Element {
     }
 
     rsx! {
-        aside { class: "sidebar",
-
-            div { class: "sidebar-header",
-                span { class: "sidebar-title", {i18n::t(locale, "sidebar_title")} }
-                button {
-                    class: if creds_empty { "cred-indicator cred-indicator--empty" } else { "cred-indicator" },
-                    onclick: move |_| creds_open.set(true),
-                    if creds_empty {
-                        Icon { name: "key", size: 12 }
-                        span { class: "cred-indicator-text", {i18n::t(locale, "not_logged_in")} }
-                    } else {
-                        span { class: "cred-indicator-text", "{creds_username}" }
-                        Icon { name: "key", size: 12 }
-                    }
-                }
-            }
+        aside {
+            id: "camera-sidebar",
+            class: if sidebar_collapsed() { "sidebar sidebar--collapsed" } else { "sidebar" },
+            style: format!("--camera-thumbnail-width: {}px; width: {}px;", *ctx.camera_item_size.read(), if sidebar_collapsed() { 42.0 } else { sidebar_width() }),
 
             div { class: "sidebar-search",
                 input {
@@ -445,31 +441,72 @@ pub fn DeviceList() -> Element {
                     value: "{filter}",
                     oninput: move |e| filter.set(e.value()),
                 }
+                button {
+                    id: "device-filters-toggle",
+                    class: if filters_active { "icon-btn sidebar-filter-toggle sidebar-filter-toggle--active" } else { "icon-btn sidebar-filter-toggle" },
+                    title: filters_label,
+                    aria_label: filters_label,
+                    aria_expanded: filters_open(),
+                    aria_controls: "device-list-filters",
+                    onclick: move |_| {
+                        let open = !filters_open();
+                        filters_open.set(open);
+                    },
+                    Icon { name: "sliders", size: 15 }
+                }
+                button {
+                    class: "icon-btn sidebar-collapse-toggle",
+                    title: i18n::t(locale, if sidebar_collapsed() { "sidebar_expand" } else { "sidebar_collapse" }),
+                    aria_label: i18n::t(locale, if sidebar_collapsed() { "sidebar_expand" } else { "sidebar_collapse" }),
+                    aria_expanded: !sidebar_collapsed(),
+                    aria_controls: "camera-sidebar",
+                    onclick: move |_| {
+                        let collapsed = !sidebar_collapsed();
+                        sidebar_collapsed.set(collapsed);
+                    },
+                    Icon {
+                        name: match sidebar_collapsed() { true => "arrow-right", false => "arrow-left" },
+                        size: 15,
+                    }
+                }
             }
 
-            // Filter + sort controls. Narrow sidebar → two compact
-            // side-by-side selects. Resets and defaults are local state,
-            // not persisted — users who want a specific view re-pick each
-            // session. Keeps the UI discoverable without a hidden popup.
-            div { class: "sidebar-filters",
-                select {
-                    class: "sidebar-filter-select",
-                    title: i18n::t(locale, "filter_status_tooltip"),
-                    value: "{active_status.as_str()}",
-                    onchange: move |e| status_filter.set(StatusFilter::from_str(&e.value())),
-                    option { value: "all",     {i18n::t(locale, "filter_status_all")} }
-                    option { value: "ok",      {i18n::t(locale, "filter_status_ok")} }
-                    option { value: "failed",  {i18n::t(locale, "filter_status_failed")} }
-                    option { value: "unknown", {i18n::t(locale, "filter_status_unknown")} }
-                }
-                select {
-                    class: "sidebar-filter-select",
-                    title: i18n::t(locale, "filter_sort_tooltip"),
-                    value: "{active_sort.as_str()}",
-                    onchange: move |e| sort_by.set(SortBy::from_str(&e.value())),
-                    option { value: "default", {i18n::t(locale, "filter_sort_default")} }
-                    option { value: "name",    {i18n::t(locale, "filter_sort_name")} }
-                    option { value: "ip",      {i18n::t(locale, "filter_sort_ip")} }
+            if filters_open() {
+                div {
+                    id: "device-list-filters",
+                    class: "sidebar-filters",
+                    onkeydown: move |event| {
+                        match event.key() {
+                            Key::ArrowUp | Key::ArrowDown => event.stop_propagation(),
+                            Key::Escape => {
+                                event.stop_propagation();
+                                filters_open.set(false);
+                                let _ = document::eval("document.getElementById('device-filters-toggle')?.focus()");
+                            }
+                            _ => {}
+                        }
+                    },
+                    select {
+                        class: "sidebar-filter-select",
+                        title: i18n::t(locale, "filter_status_tooltip"),
+                        aria_label: i18n::t(locale, "filter_status_tooltip"),
+                        value: "{active_status.as_str()}",
+                        onchange: move |e| status_filter.set(StatusFilter::from_str(&e.value())),
+                        option { value: "all",     {i18n::t(locale, "filter_status_all")} }
+                        option { value: "ok",      {i18n::t(locale, "filter_status_ok")} }
+                        option { value: "failed",  {i18n::t(locale, "filter_status_failed")} }
+                        option { value: "unknown", {i18n::t(locale, "filter_status_unknown")} }
+                    }
+                    select {
+                        class: "sidebar-filter-select",
+                        title: i18n::t(locale, "filter_sort_tooltip"),
+                        aria_label: i18n::t(locale, "filter_sort_tooltip"),
+                        value: "{active_sort.as_str()}",
+                        onchange: move |e| sort_by.set(SortBy::from_str(&e.value())),
+                        option { value: "default", {i18n::t(locale, "filter_sort_default")} }
+                        option { value: "name",    {i18n::t(locale, "filter_sort_name")} }
+                        option { value: "ip",      {i18n::t(locale, "filter_sort_ip")} }
+                    }
                 }
             }
 
@@ -496,6 +533,7 @@ pub fn DeviceList() -> Element {
                         is_clone: dev.clone_of.is_some(),
                         selected: sel == Some(i),
                         auth_status: dev.auth_status,
+                        show_preview: !sidebar_collapsed(),
                         edit_dialog_open,
                         edit_device_idx,
                         picker_open,
@@ -503,6 +541,10 @@ pub fn DeviceList() -> Element {
                     }
                 }
                 SavedMocks {}
+            }
+
+            if *ctx.view.read() == View::HealthOverview {
+                crate::components::HealthGroupsPanel {}
             }
 
             div { class: "sidebar-footer",
@@ -525,10 +567,88 @@ pub fn DeviceList() -> Element {
                     {i18n::t(locale, "btn_add_label")}
                 }
             }
+            div { class: "sidebar-global-nav",
+                button {
+                    class: if *ctx.view.read() == View::HealthOverview { "sidebar-health sidebar-health--active" } else { "sidebar-health" },
+                    onclick: move |_| {
+                        ctx.health_list.clone().set(crate::state::HealthListSel::AllDevices);
+                        ctx.view.clone().set(View::HealthOverview);
+                    },
+                    Icon { name: "activity", size: 15 }
+                    {i18n::t(locale, "workspace_fleet")}
+                }
+                button {
+                    class: if *ctx.view.read() == View::AppSettings { "icon-btn sidebar-settings sidebar-settings--active" } else { "icon-btn sidebar-settings" },
+                    title: i18n::t(locale, "app_settings_title"),
+                    aria_label: i18n::t(locale, "app_settings_title"),
+                    aria_current: if *ctx.view.read() == View::AppSettings { "page" } else { "false" },
+                    onclick: move |_| ctx.view.clone().set(View::AppSettings),
+                    Icon { name: "settings", size: 16 }
+                }
+            }
+        }
+
+        if !sidebar_collapsed() {
+            div {
+                id: "camera-sidebar-divider",
+                class: if resize_start.read().is_some() { "sidebar-resizer sidebar-resizer--active" } else { "sidebar-resizer" },
+                role: "separator",
+                tabindex: "0",
+                aria_orientation: "vertical",
+                aria_label: i18n::t(locale, "sidebar_resize"),
+                title: i18n::t(locale, "sidebar_resize"),
+                aria_controls: "camera-sidebar",
+                aria_valuemin: "200",
+                aria_valuemax: "560",
+                aria_valuenow: "{sidebar_width}",
+                onmounted: move |_| {
+                    let _ = document::eval(r#"
+                        const divider = document.getElementById('camera-sidebar-divider');
+                        divider?.addEventListener('pointerdown', event => {
+                            if (event.button === 0) divider.setPointerCapture(event.pointerId);
+                        });
+                    "#);
+                },
+                onpointerdown: move |event: Event<PointerData>| {
+                    if event.data().trigger_button() != Some(MouseButton::Primary) {
+                        return;
+                    }
+                    event.prevent_default();
+                    event.stop_propagation();
+                    let window = dioxus::desktop::window();
+                    let viewport = window.window.inner_size().to_logical::<f64>(window.window.scale_factor()).width;
+                    let width = crate::state::clamp_sidebar_width(sidebar_width(), viewport);
+                    resize_start.set(Some((event.data().client_coordinates().x, width, viewport)));
+                },
+                onpointermove: move |event: Event<PointerData>| {
+                    let start = *resize_start.peek();
+                    if let Some((start_x, width, viewport)) = start {
+                        event.prevent_default();
+                        event.stop_propagation();
+                        sidebar_width.set(crate::state::clamp_sidebar_width(width + event.data().client_coordinates().x - start_x, viewport));
+                    }
+                },
+                onpointerup: move |_| resize_start.set(None),
+                onpointercancel: move |_| resize_start.set(None),
+                onlostpointercapture: move |_| resize_start.set(None),
+                ondoubleclick: move |_| sidebar_width.set(240.0),
+                onkeydown: move |event| {
+                    let width = match event.key() {
+                        Key::ArrowLeft => sidebar_width() - 16.0,
+                        Key::ArrowRight => sidebar_width() + 16.0,
+                        Key::Home => 240.0,
+                        _ => return,
+                    };
+                    event.prevent_default();
+                    event.stop_propagation();
+                    let window = dioxus::desktop::window();
+                    let viewport = window.window.inner_size().to_logical::<f64>(window.window.scale_factor()).width;
+                    sidebar_width.set(crate::state::clamp_sidebar_width(width, viewport));
+                },
+            }
         }
 
         AddDeviceDialog { open: add_dialog_open }
-        GlobalCredentialsDialog { open: creds_open }
         EditDeviceDialog { open: edit_dialog_open, device_index: edit_device_idx }
         AddToGroupDialog { open: picker_open, device_index: picker_device_idx }
     }
@@ -616,7 +736,7 @@ fn SavedMocks() -> Element {
                                         let idx = devs.len() - 1;
                                         drop(devs);
                                         ctx.selected.clone().set(Some(idx));
-                                        ctx.view.clone().set(View::DeviceSettings);
+                                        ctx.view.clone().set(View::LiveVideo);
                                     }
                                     Err(e) => ctx.push_toast(
                                         ToastLevel::Error,
@@ -673,6 +793,49 @@ fn SavedMocks() -> Element {
 }
 
 #[component]
+fn CameraThumbnail(
+    addr: ReadSignal<String>,
+    creds: ReadSignal<crate::state::Credentials>,
+) -> Element {
+    let mut image = use_signal(|| None::<String>);
+    let _thumbnail = use_resource(move || {
+        let addr = addr.read().clone();
+        let creds = creds.read().clone();
+        async move {
+            image.set(None);
+            let profiles = api::get_profiles(&addr, &creds).await?;
+            let Some(profile) = crate::state::preferred_video_profile(&profiles, None) else {
+                return Ok::<(), String>(());
+            };
+            let token = profile.token.as_str();
+            let mut snapshot = api::get_snapshot_uri(&addr, &creds, token).await.ok();
+            loop {
+                let data_uri = if let Some(snapshot) = &snapshot {
+                    let url = api::resolve_snapshot_url(&addr, &snapshot.uri);
+                    api::fetch_snapshot_data_uri(&url, &creds).await?
+                } else {
+                    let bytes = crate::video::rtsp::snapshot_jpeg(&addr, token, &creds).await?;
+                    util::jpeg_data_uri(&bytes)
+                };
+                image.set(Some(data_uri));
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if snapshot.is_some() {
+                    snapshot = Some(api::get_snapshot_uri(&addr, &creds, token).await?);
+                }
+            }
+        }
+    });
+
+    rsx! {
+        if let Some(source) = image.read().as_ref() {
+            img { src: "{source}", alt: "", draggable: "false" }
+        } else {
+            Icon { name: "camera", size: 20 }
+        }
+    }
+}
+
+#[component]
 fn DeviceCard(
     index: usize,
     name: String,
@@ -684,6 +847,7 @@ fn DeviceCard(
     is_clone: bool,
     selected: bool,
     auth_status: crate::state::AuthStatus,
+    show_preview: bool,
     edit_dialog_open: Signal<bool>,
     edit_device_idx: Signal<Option<usize>>,
     picker_open: Signal<bool>,
@@ -717,6 +881,7 @@ fn DeviceCard(
 
     let card_name = name.clone();
     let card_addr = display_addr.clone();
+    let preview_device = ctx.devices.read().get(index).cloned();
 
     rsx! {
         div {
@@ -728,7 +893,7 @@ fn DeviceCard(
                     return;
                 }
                 sel.set(Some(index));
-                view.set(View::DeviceSettings);
+                view.set(View::LiveVideo);
             },
             oncontextmenu: move |e| {
                 e.prevent_default();
@@ -755,19 +920,30 @@ fn DeviceCard(
                     }));
                 }
             },
-            div { class: "device-card-header",
-                span { class: dot_class }
-                span { class: "device-name", "{name}" }
+            div { class: "device-thumbnail",
+                if show_preview && auth_status == AuthStatus::Ok {
+                    if let Some(device) = preview_device {
+                        CameraThumbnail { addr: device.addr.clone(), creds: ctx.credentials_for(&device) }
+                    }
+                } else {
+                    Icon { name: "camera", size: 20 }
+                }
             }
-            div { class: "device-addr", "{display_addr}" }
-            if !firmware.is_empty() {
-                div { class: "device-firmware", "FW {firmware}" }
-            }
-            if !location.is_empty() {
-                div { class: "device-location", "{location}" }
-            }
-            if is_clone {
-                div { class: "device-firmware", {i18n::t(locale, "clone_badge")} }
+            div { class: "device-card-info",
+                div { class: "device-card-header",
+                    span { class: dot_class }
+                    span { class: "device-name", title: "{name}", "{name}" }
+                }
+                div { class: "device-addr", "{display_addr}" }
+                if !firmware.is_empty() {
+                    div { class: "device-firmware", "FW {firmware}" }
+                }
+                if !location.is_empty() {
+                    div { class: "device-location", "{location}" }
+                }
+                if is_clone {
+                    div { class: "device-firmware", {i18n::t(locale, "clone_badge")} }
+                }
             }
         }
 
@@ -855,7 +1031,7 @@ fn DeviceCard(
                                                 let idx = devs.len() - 1;
                                                 drop(devs);
                                                 ctx.selected.clone().set(Some(idx));
-                                                ctx.view.clone().set(View::DeviceSettings);
+                                                ctx.view.clone().set(View::LiveVideo);
                                                 ctx.push_toast(
                                                     ToastLevel::Success,
                                                     i18n::t(locale, "ctx_clone_done")

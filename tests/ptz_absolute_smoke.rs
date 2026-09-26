@@ -29,6 +29,199 @@ mod state;
 use crate::state::Credentials;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn drag_pan_release_ends_motion_without_queued_commands() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url().to_string();
+    let creds = Credentials::default();
+    for (horizontal, vertical) in [
+        (52.0, 0.0),
+        (0.0, -52.0),
+        (0.0, 52.0),
+        (52.0, 8.0),
+        (8.0, -52.0),
+        (-8.0, 52.0),
+    ] {
+        let before = api::ptz_get_status(&addr, &creds, "Profile_1")
+            .await
+            .unwrap();
+        let velocity = api::ptz_drag_velocity(horizontal, vertical, 0.5);
+        let (updates, receiver) = tokio::sync::watch::channel(velocity);
+        let worker = tokio::spawn(api::ptz_drag(
+            addr.clone(),
+            creds.clone(),
+            "Profile_1".to_string(),
+            receiver,
+        ));
+        let moved = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let current = api::ptz_get_status(&addr, &creds, "Profile_1")
+                    .await
+                    .unwrap();
+                if current.pan != before.pan || current.tilt != before.tilt {
+                    break current;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(375)).await;
+        let held = api::ptz_get_status(&addr, &creds, "Profile_1")
+            .await
+            .unwrap();
+        drop(updates);
+        tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            held.pan, moved.pan,
+            "steady hold must not repeat pan commands"
+        );
+        assert_eq!(
+            held.tilt, moved.tilt,
+            "steady hold must not repeat tilt commands"
+        );
+        if velocity.0 != 0.0 {
+            assert!(moved.pan > before.pan);
+            assert_eq!(moved.tilt, before.tilt);
+        } else {
+            assert_eq!(moved.pan, before.pan);
+            if vertical < 0.0 {
+                assert!(moved.tilt > before.tilt);
+            } else {
+                assert!(moved.tilt < before.tilt);
+            }
+        }
+        let stopped = api::ptz_get_status(&addr, &creds, "Profile_1")
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(175)).await;
+        let after = api::ptz_get_status(&addr, &creds, "Profile_1")
+            .await
+            .unwrap();
+        assert_eq!(after.pan, stopped.pan);
+        assert_eq!(after.tilt, stopped.tilt);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn drag_pan_filters_jitter_without_losing_speed_changes_or_reversals() {
+    const MOCK_MOVE_STEP: f32 = 0.05;
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url().to_string();
+    let creds = Credentials::default();
+    let mut before = api::ptz_get_status(&addr, &creds, "Profile_1")
+        .await
+        .unwrap();
+    let (updates, receiver) = tokio::sync::watch::channel((0.0, 0.0));
+    let worker = tokio::spawn(api::ptz_drag(
+        addr.clone(),
+        creds.clone(),
+        "Profile_1".to_string(),
+        receiver,
+    ));
+    for (velocity, should_move) in [
+        ((0.5, 0.0), true),
+        ((0.5, 0.0), false),
+        ((0.54, 0.0), false),
+        ((0.47, 0.0), false),
+        ((0.58, 0.0), false),
+        ((0.65, 0.0), true),
+        ((0.67, 0.0), false),
+        ((0.65, 0.02), true),
+        ((0.65, -0.02), true),
+        ((0.65, 0.0), true),
+        ((0.0, 0.0), false),
+        ((0.65, 0.0), true),
+        ((0.02, 0.0), true),
+        ((-0.02, 0.0), true),
+    ] {
+        updates.send(velocity).unwrap();
+        if should_move {
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    let current = api::ptz_get_status(&addr, &creds, "Profile_1")
+                        .await
+                        .unwrap();
+                    if current.pan != before.pan || current.tilt != before.tilt {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(375)).await;
+        let after = api::ptz_get_status(&addr, &creds, "Profile_1")
+            .await
+            .unwrap();
+        let step = if should_move { MOCK_MOVE_STEP } else { 0.0 };
+        assert!(
+            (after.pan.unwrap() - before.pan.unwrap() - velocity.0 * step).abs() < 0.000001,
+            "unexpected pan command count or speed for {velocity:?}"
+        );
+        assert!(
+            (after.tilt.unwrap() - before.tilt.unwrap() - velocity.1 * step).abs() < 0.000001,
+            "unexpected tilt command count or speed for {velocity:?}"
+        );
+        before = after;
+    }
+    server.inject_fault("Stop", "ter:ActionNotSupported", "release-stop-observed");
+    drop(updates);
+    let error = tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err();
+    assert!(error.contains("release-stop-observed"), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ptz_travel_tracks_the_selected_heads_reported_position() {
+    let server = MockServer::start().await.unwrap();
+    let addr = server.device_url();
+    let creds = Credentials::default();
+    let node = api::ptz_node_for_profile(addr, &creds, "Profile_1")
+        .await
+        .unwrap();
+    let limits = api::ptz_absolute_limits(&node);
+    let before = api::ptz_get_status(addr, &creds, "Profile_1")
+        .await
+        .unwrap();
+    assert_eq!(api::ptz_axis_fraction(before.pan, limits.pan), Some(0.5));
+    assert_eq!(api::ptz_axis_fraction(before.tilt, limits.tilt), Some(0.5));
+
+    api::ptz_absolute_move(addr, &creds, "Profile_1", 0.5, -0.5, 0.0)
+        .await
+        .unwrap();
+    let now = api::ptz_get_status(addr, &creds, "Profile_1")
+        .await
+        .unwrap();
+    let pan = api::ptz_axis_fraction(now.pan, limits.pan).unwrap();
+    let tilt = api::ptz_axis_fraction(now.tilt, limits.tilt).unwrap();
+    assert_eq!((pan, 1.0 - pan, 1.0 - tilt, tilt), (0.75, 0.25, 0.75, 0.25));
+
+    let other_node = api::ptz_node_for_profile(addr, &creds, "Profile_3")
+        .await
+        .unwrap();
+    let other_limits = api::ptz_absolute_limits(&other_node);
+    let other_position = api::ptz_get_status(addr, &creds, "Profile_3")
+        .await
+        .unwrap();
+    assert_eq!(
+        api::ptz_axis_fraction(other_position.pan, other_limits.pan),
+        None
+    );
+    assert_eq!(
+        api::ptz_axis_fraction(other_position.tilt, other_limits.tilt),
+        None
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn each_profile_resolves_to_its_own_head() {
     let server = MockServer::start().await.expect("mock server boots");
     let addr = server.device_url().to_string();

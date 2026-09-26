@@ -7,14 +7,14 @@ on the [`oxvif`](https://github.com/smiti1642/oxvif) ONVIF client library.
 
 ![OxDM managing an ONVIF camera — device list, profile panel, and the device identification settings tab](https://raw.githubusercontent.com/smiti1642/oxdm/main/docs/screenshot.png)
 
-> **Project status — pre-release (v0.5.0).** Built on oxvif 0.16.0. Core device management works
+> **Project status — pre-release (v0.6.0).** Built on oxvif 0.16.0. Core device management works
 > end-to-end against real cameras and the `oxvif` mock server. Release bundles
 > are not yet code-signed, so the operating system may warn about an
 > unidentified developer on first launch.
 
-Version 0.4.1 surfaces discovery I/O errors through the existing error toast
-and keeps a known device's address when reordered discovery responses still
-advertise it. It also updates dependencies identified by the security audit.
+Version 0.6.0 introduces a camera-first workspace, compact PTZ controls,
+saved PTZ speed and sidebar collapse preferences, and learned support for
+optional snapshot and imaging-status operations.
 See the [changelog](./CHANGELOG.md) for details.
 
 ## Contents
@@ -31,7 +31,7 @@ See the [changelog](./CHANGELOG.md) for details.
 ### Prebuilt bundles
 
 Bundles for each release are attached to the corresponding
-[GitHub Release](https://github.com/smiti1642/oxdm/releases):
+[GitHub Release](https://github.com/nimatrueway/oxdm/releases):
 
 | Platform | Asset | Notes |
 |----------|-------|-------|
@@ -63,17 +63,21 @@ Notes:
 
 OxDM builds with a current stable Rust toolchain — no extra tooling is required to
 produce a runnable binary (`dx` is only needed for hot-reload development and
-for producing installer bundles). Install from
+for producing installer bundles). The upstream package is available from
 [crates.io](https://crates.io/crates/oxvif-device-manager):
 
 ```sh
 cargo install oxvif-device-manager --locked
 ```
 
-or build the latest commit directly from Git:
+For this fork's latest changes, build from a checkout so the patched RTSP
+dependency can be prepared:
 
 ```sh
-cargo install --git https://github.com/smiti1642/oxdm
+git clone https://github.com/nimatrueway/oxdm.git
+cd oxdm
+./scripts/vendor-retina.sh
+cargo install --path . --locked
 ```
 
 Either way the installed command is **`oxdm`** (the crate is published as
@@ -96,6 +100,26 @@ The equivalent Fedora packages are `webkit2gtk4.1-devel`, `gtk3-devel`,
 
 ## Features
 
+- **Two-pane workspace** — select a camera to open Live, with lens and stream
+  selectors and camera controls in a compact toolbar above the feed. PTZ and
+  image adjustments open beside the same player (below it in smaller windows).
+  Settings subtabs group device configuration, image/encoder controls, and
+  profile management, with Health, Events, and Quirks under Diagnostics.
+  Settings and Recordings open from the video toolbar and have a back-to-video
+  button; there is no separate camera header. Fleet
+  health and saved groups live in the camera sidebar, with filter and sort
+  options tucked behind the button beside search. The sidebar collapses or
+  resizes with its divider, and camera thumbnails have a configurable size.
+  The sidebar's collapsed state is remembered across restarts.
+  A hold-and-drag pan control sits beside Playback options and shares the PTZ
+  panel's speed setting, saved across navigation and restarts. Release stops
+  the camera. During dragging, an overlay
+  compares the starting and current camera-reported position and remaining
+  travel in each direction. Missing position/range data stays unknown.
+  Closing PiP restores the main window.
+- **App settings** — the sidebar gear opens theme, language, default camera
+  credentials, capture folders, TLS validation, logging, and About. Credentials
+  remain in the system keychain, with per-device overrides preserved.
 - **Discovery** — three-round WS-Discovery scan of the local network, plus
   manually-added devices. Discovered devices persist across restarts. Returned
   I/O errors are shown separately from a successful scan finding no devices;
@@ -105,7 +129,15 @@ The equivalent Fedora packages are `webkit2gtk4.1-devel`, `gtk3-devel`,
   audio) decoded in-process: a pure-Rust RTSP client feeds the WebView's
   WebCodecs decoder, with an OpenH264 → MJPEG fallback where WebCodecs is
   unavailable. No sidecar binaries or ffmpeg required.
-- **Snapshots** — save a JPEG from any profile thumbnail or the Live Video view.
+- **Optional camera operations** — unsupported `GetSnapshotUri` responses are
+  remembered per camera/profile, allowing the existing RTSP snapshot fallback
+  without repeated SOAP requests. `GetImagingStatus` support is tracked per
+  camera/video source. Decisions are scoped to credentials and reset with the
+  session or app restart; authentication and transient failures remain retryable.
+- **Snapshots and local recording** — snapshots save immediately from any
+  profile thumbnail or Live, with unique timestamped JPEG filenames. App
+  Settings → Storage controls snapshot and recording folders; defaults are
+  `Pictures/OxDM` and `Movies/OxDM` (the OS video folder), respectively.
 - **Device settings** — identification and scopes; network (hostname, IPv4 and
   IPv6 manual interfaces, MTU, DNS, NTP, gateway, protocols); system time (with
   PC sync and timezone/DST); user management (create/read/update/delete); and

@@ -15,7 +15,7 @@ pub(crate) mod util;
 mod video;
 mod views;
 
-use components::{ConfirmDialogModal, DeviceList, DevicePanel, ToastContainer, Topbar};
+use components::{ConfirmDialogModal, DeviceList, ToastContainer};
 use state::{Credentials, Ctx, GlobalKey, SettingsTab, View};
 use views::MainContent;
 
@@ -126,11 +126,7 @@ fn main() {
                 dioxus::desktop::WindowBuilder::new()
                     .with_title("OxDM")
                     .with_window_icon(load_window_icon())
-                    // 1280 was ~40px short of fitting the settings tab bar:
-                    // the two sidebars take 500, the seven tabs
-                    // (Identification…Health, Quirks) need ~750, and Quirks
-                    // fell off the right edge with nothing to scroll it back.
-                    .with_inner_size(dioxus::desktop::LogicalSize::new(1440.0, 800.0))
+                    .with_inner_size(dioxus::desktop::LogicalSize::new(1280.0, 800.0))
                     .with_min_inner_size(dioxus::desktop::LogicalSize::new(900.0, 500.0)),
             ),
         )
@@ -172,6 +168,11 @@ fn App() -> Element {
         keyboard_action: use_signal(|| None),
         log_to_file: use_signal(|| cfg.log_to_file),
         tls_strict: use_signal(|| cfg.tls_strict),
+        snapshot_dir: use_signal(|| cfg.snapshot_dir.clone()),
+        recording_dir: use_signal(|| cfg.recording_dir.clone()),
+        camera_item_size: use_signal(|| cfg.camera_item_size()),
+        sidebar_collapsed: use_signal(|| cfg.sidebar_collapsed),
+        ptz_speed: use_signal(|| cfg.ptz_speed()),
         loaded: use_signal(|| false),
     };
     // Seed the TLS-strict atomic from config so the first snapshot fetch
@@ -204,7 +205,7 @@ fn App() -> Element {
         }
     });
 
-    // Auto-save when theme / locale / log / tls preference change.
+    // Auto-save application preferences when they change.
     // Also pushes tls_strict into the api atomic so a toggle takes effect
     // on the next snapshot without a restart (unlike log_to_file).
     use_effect(move || {
@@ -212,8 +213,23 @@ fn App() -> Element {
         let locale = *ctx.locale.read();
         let log_to_file = *ctx.log_to_file.read();
         let tls_strict = *ctx.tls_strict.read();
+        let snapshot_dir = ctx.snapshot_dir.read().clone();
+        let recording_dir = ctx.recording_dir.read().clone();
+        let camera_item_size = *ctx.camera_item_size.read();
+        let sidebar_collapsed = *ctx.sidebar_collapsed.read();
+        let ptz_speed = *ctx.ptz_speed.read();
         api::set_tls_strict(tls_strict);
-        persist::save_config(theme, locale, log_to_file, tls_strict);
+        persist::save_config(persist::ConfigOut {
+            theme: persist::theme_to_str(theme).to_string(),
+            locale: persist::locale_to_str(locale).to_string(),
+            log_to_file,
+            tls_strict,
+            snapshot_dir,
+            recording_dir,
+            camera_item_size,
+            sidebar_collapsed,
+            ptz_speed,
+        });
     });
 
     // Re-verify auth when credentials change
@@ -229,8 +245,8 @@ fn App() -> Element {
     // device switch either resolves to a different camera's channel of the same
     // name, or misses and silently falls back to lens 0 (see
     // `api::pick_channel`). Neither is visible in the UI. Only `ctx.selected`
-    // is subscribed: the thumbnail cards set `selected_profile` without
-    // touching it, so a profile click does not clear itself.
+    // is subscribed: the profile selector sets `selected_profile` without
+    // touching it, so a stream selection does not clear itself.
     //
     // Session restore hands its profile over through `restore_profile`, so the
     // clear that follows its device selection installs it instead of wiping it.
@@ -256,11 +272,11 @@ fn App() -> Element {
             return;
         }
         let view = persist::view_from_str(&session.view);
+        if matches!(view, View::AppSettings | View::HealthOverview) {
+            ctx.view.clone().set(view);
+        }
         if session.device_addr.is_empty() {
             pending_session.set(None);
-            if view == View::HealthOverview {
-                ctx.view.clone().set(view);
-            }
             return;
         }
         let Some(idx) = devices.iter().position(|d| d.addr == session.device_addr) else {
@@ -285,8 +301,11 @@ fn App() -> Element {
         }
         // A pending restore must not be overwritten by the launch defaults,
         // but a user selection made before it resolves wins over it.
-        if pending_session.peek().is_some() {
-            if selected.is_none() {
+        let pending = pending_session.peek().clone();
+        if let Some(session) = pending {
+            if selected.is_none()
+                && (view != View::AppSettings || view == persist::view_from_str(&session.view))
+            {
                 return;
             }
             pending_session.set(None);
@@ -418,10 +437,8 @@ fn App() -> Element {
                         _ => {}
                     }
                 },
-                Topbar {}
                 div { class: "shell-body",
                     DeviceList {}
-                    DevicePanel {}
                     MainContent {}
                 }
                 ToastContainer {}

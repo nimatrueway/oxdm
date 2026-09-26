@@ -5,6 +5,44 @@ use crate::api::{
 use oxvif::{Capabilities, FloatRange, MediaProfile, MediaServiceCapabilities};
 
 #[test]
+fn drag_pan_velocity_matches_ptz_buttons_at_every_distance() {
+    for speed in [0.1, 0.5, 1.0] {
+        assert_eq!(crate::api::ptz_drag_velocity(2.0, 2.0, speed), (0.0, 0.0));
+        assert_eq!(crate::api::ptz_drag_velocity(4.0, 4.0, speed), (0.0, 0.0));
+        assert_eq!(
+            crate::api::ptz_drag_velocity(52.0, 8.0, speed),
+            (speed, 0.0)
+        );
+        assert_eq!(
+            crate::api::ptz_drag_velocity(8.0, -52.0, speed),
+            (0.0, speed)
+        );
+        assert_eq!(
+            crate::api::ptz_drag_velocity(-8.0, 52.0, speed),
+            (0.0, -speed)
+        );
+        for distance in [5.0, 52.0, 100.0, 10_000.0] {
+            for (pan, tilt) in [
+                (-1.0, 1.0),
+                (0.0, 1.0),
+                (1.0, 1.0),
+                (-1.0, 0.0),
+                (1.0, 0.0),
+                (-1.0, -1.0),
+                (0.0, -1.0),
+                (1.0, -1.0),
+            ] {
+                assert_eq!(
+                    crate::api::ptz_drag_velocity(pan * distance, -tilt * distance, speed),
+                    (pan as f32 * speed, tilt as f32 * speed),
+                    "drag distance {distance} must not change the PTZ button speed"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn base_url_strips_onvif_path() {
     assert_eq!(
         base_url_from_device_addr("http://192.168.1.1/onvif/device_service"),
@@ -53,6 +91,129 @@ fn io_unsupported_covers_the_fault_texts_and_a_missing_deviceio_endpoint() {
     // the whole field name is matched, not the "missing required field" prefix.
     assert!(!is_action_unsupported("Missing required field: Token"));
     assert!(!is_action_unsupported("HTTP status 401 Unauthorized"));
+}
+
+#[test]
+fn optional_operation_support_uses_fault_codes_without_caching_auth_or_transient_errors() {
+    for (code, subcode, reason, expected) in [
+        ("ter:ActionNotSupported", None, "", true),
+        (
+            "s:Receiver",
+            Some("ter:ActionNotSupported"),
+            "Unavailable",
+            true,
+        ),
+        ("SOAP-ENV:Receiver", None, "", true),
+        ("s:Receiver", None, " ", true),
+        ("s:Receiver", None, "Optional Action Not Implemented", true),
+        ("s:Receiver", None, "Device busy", false),
+        ("s:Sender", None, "", false),
+        (
+            "ter:NotAuthorized",
+            None,
+            "Operation not supported for this user",
+            false,
+        ),
+        (
+            "s:Receiver",
+            Some("wsse:FailedAuthentication"),
+            "Not supported",
+            false,
+        ),
+        (
+            "s:Receiver",
+            Some("ter:InvalidArgVal"),
+            "Profile not supported",
+            false,
+        ),
+        ("s:Receiver", Some("ter:DeviceBusy"), "", false),
+    ] {
+        let error = oxvif::OnvifError::Soap(oxvif::soap::SoapError::Fault {
+            code: code.to_string(),
+            reason: reason.to_string(),
+            subcode: subcode.map(str::to_string),
+            detail: None,
+        });
+        assert_eq!(
+            crate::api::is_optional_operation_unsupported(&error),
+            expected,
+            "{code} / {subcode:?}: {reason}"
+        );
+    }
+    for status in [401, 403, 500, 503] {
+        let error = oxvif::OnvifError::Transport(oxvif::transport::TransportError::HttpStatus {
+            status,
+            body: "Not supported".to_string(),
+        });
+        assert!(!crate::api::is_optional_operation_unsupported(&error));
+    }
+}
+
+#[test]
+fn optional_operation_support_is_scoped_and_invalidated_with_sessions() {
+    let pool = crate::sessions::SessionPool::new();
+    let original = pool.operation_support(
+        "camera",
+        Some("alice"),
+        Some("password"),
+        "GetSnapshotUri",
+        "token",
+    );
+    assert!(std::sync::Arc::ptr_eq(
+        &original,
+        &pool.operation_support(
+            "camera",
+            Some("alice"),
+            Some("password"),
+            "GetSnapshotUri",
+            "token"
+        )
+    ));
+    for (addr, username, password, method, token) in [
+        (
+            "other-camera",
+            "alice",
+            "password",
+            "GetSnapshotUri",
+            "token",
+        ),
+        ("camera", "bob", "password", "GetSnapshotUri", "token"),
+        ("camera", "alice", "changed", "GetSnapshotUri", "token"),
+        ("camera", "alice", "password", "GetImagingStatus", "token"),
+        (
+            "camera",
+            "alice",
+            "password",
+            "GetSnapshotUri",
+            "other-token",
+        ),
+    ] {
+        assert!(!std::sync::Arc::ptr_eq(
+            &original,
+            &pool.operation_support(addr, Some(username), Some(password), method, token)
+        ));
+    }
+    let other = pool.operation_support("other-camera", None, None, "GetSnapshotUri", "token");
+    pool.invalidate("camera");
+    assert!(!std::sync::Arc::ptr_eq(
+        &original,
+        &pool.operation_support(
+            "camera",
+            Some("alice"),
+            Some("password"),
+            "GetSnapshotUri",
+            "token"
+        )
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &other,
+        &pool.operation_support("other-camera", None, None, "GetSnapshotUri", "token")
+    ));
+    pool.invalidate_all();
+    assert!(!std::sync::Arc::ptr_eq(
+        &other,
+        &pool.operation_support("other-camera", None, None, "GetSnapshotUri", "token")
+    ));
 }
 
 #[test]
@@ -249,6 +410,43 @@ fn asking_for_lens_1_gets_lens_1_and_is_not_a_fallback() {
             "{kind:?} reported a fallback it did not make"
         );
     }
+}
+
+#[test]
+fn live_profile_selection_preserves_the_selected_lens() {
+    let profiles = two_lens_profiles();
+    let profile = crate::state::preferred_video_profile(&profiles, Some("profile_1")).unwrap();
+    assert_eq!(profile.token, "profile_1");
+    assert_eq!(profile.video_source_token.as_deref(), Some("source_1"));
+}
+
+#[test]
+fn live_profile_selection_skips_metadata_and_missing_tokens() {
+    let mut profiles = two_lens_profiles();
+    profiles.rotate_right(1);
+    for selected in [None, Some("meta"), Some("another_camera")] {
+        assert_eq!(
+            crate::state::preferred_video_profile(&profiles, selected)
+                .unwrap()
+                .token,
+            "profile_0"
+        );
+    }
+}
+
+#[test]
+fn live_profile_selection_recovers_after_a_profile_is_hidden_or_deleted() {
+    let mut profiles = two_lens_profiles();
+    profiles.retain(|profile| profile.token != "profile_0");
+    assert_eq!(
+        crate::state::preferred_video_profile(&profiles, Some("profile_0"))
+            .unwrap()
+            .token,
+        "profile_1"
+    );
+    profiles.retain(|profile| profile.video_encoder_token.is_none());
+    assert!(crate::state::preferred_video_profile(&profiles, Some("meta")).is_none());
+    assert!(crate::state::preferred_video_profile(&[], None).is_none());
 }
 
 #[test]
@@ -461,6 +659,55 @@ fn the_absolute_space_is_found_by_uri_not_by_position() {
     assert_eq!(limits.tilt, Some((-20.0, 90.0)));
     assert_eq!(limits.zoom, Some((1.0, 30.0)));
     assert!(!limits.is_empty());
+}
+
+#[test]
+fn ptz_axis_fraction_tracks_asymmetric_limits_and_end_stops() {
+    let limits = ptz_absolute_limits(&node_with_all_space_kinds());
+    assert_eq!(
+        crate::api::ptz_axis_fraction(Some(85.0), limits.pan),
+        Some(0.75)
+    );
+    assert_eq!(
+        crate::api::ptz_axis_fraction(Some(2.0), limits.tilt),
+        Some(0.2)
+    );
+    assert_eq!(
+        crate::api::ptz_axis_fraction(Some(-170.0), limits.pan),
+        Some(0.0)
+    );
+    assert_eq!(
+        crate::api::ptz_axis_fraction(Some(170.0), limits.pan),
+        Some(1.0)
+    );
+    assert_eq!(
+        crate::api::ptz_axis_fraction(Some(-180.0), limits.pan),
+        Some(0.0)
+    );
+    assert_eq!(
+        crate::api::ptz_axis_fraction(Some(180.0), limits.pan),
+        Some(1.0)
+    );
+}
+
+#[test]
+fn ptz_axis_fraction_does_not_invent_missing_or_invalid_travel() {
+    assert_eq!(crate::api::ptz_axis_fraction(None, Some((-1.0, 1.0))), None);
+    assert_eq!(crate::api::ptz_axis_fraction(Some(0.0), None), None);
+    for limits in [
+        (1.0, 1.0),
+        (1.0, -1.0),
+        (f32::NAN, 1.0),
+        (-1.0, f32::INFINITY),
+    ] {
+        assert_eq!(crate::api::ptz_axis_fraction(Some(0.0), Some(limits)), None);
+    }
+    for position in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert_eq!(
+            crate::api::ptz_axis_fraction(Some(position), Some((-1.0, 1.0))),
+            None
+        );
+    }
 }
 
 #[test]

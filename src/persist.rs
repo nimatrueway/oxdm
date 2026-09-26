@@ -1,6 +1,6 @@
 //! Settings and device persistence.
 //!
-//! - `~/.oxdm/config.toml`: theme, locale (no credentials)
+//! - `~/.oxdm/config.toml`: app preferences, including PTZ speed (no credentials)
 //! - `~/.oxdm/devices.toml`: manually added devices (per-device creds in keychain)
 //! - `~/.oxdm/session.toml`: last selected device / profile / view, restored on launch
 //! - System keychain: global credentials + per-device credential overrides
@@ -34,11 +34,34 @@ pub struct ConfigFile {
     /// thinking would break HTTPS snapshots. Toggle in About.
     #[serde(default)]
     pub tls_strict: bool,
+    #[serde(default)]
+    pub snapshot_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub recording_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub camera_item_size: Option<u16>,
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
+    #[serde(default)]
+    pub ptz_speed: Option<f32>,
     // Legacy fields — read for migration, not written
     #[serde(default)]
     pub username: String,
     #[serde(default)]
     pub password: String,
+}
+
+impl ConfigFile {
+    pub fn camera_item_size(&self) -> u16 {
+        self.camera_item_size.unwrap_or(64).clamp(48, 112)
+    }
+
+    pub fn ptz_speed(&self) -> f32 {
+        self.ptz_speed
+            .filter(|speed| speed.is_finite())
+            .unwrap_or(0.5)
+            .clamp(0.1, 1.0)
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -72,6 +95,24 @@ fn oxdm_dir() -> Option<PathBuf> {
 
 fn config_path() -> Option<PathBuf> {
     oxdm_dir().map(|d| d.join("config.toml"))
+}
+
+pub fn snapshot_directory(configured: Option<&Path>) -> PathBuf {
+    configured.map(Path::to_path_buf).unwrap_or_else(|| {
+        dirs::picture_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("OxDM")
+    })
+}
+
+pub fn recording_directory(configured: Option<&Path>) -> PathBuf {
+    configured.map(Path::to_path_buf).unwrap_or_else(|| {
+        dirs::video_dir()
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("OxDM")
+    })
 }
 
 fn devices_path() -> Option<PathBuf> {
@@ -763,24 +804,26 @@ pub fn load_devices(creds_map: &CredsMap) -> Vec<DeviceEntry> {
 
 // ── Save ────────────────────────────────────────────────────────────────────
 
-pub fn save_config(theme: Theme, locale: Locale, log_to_file: bool, tls_strict: bool) {
+#[derive(Serialize)]
+pub struct ConfigOut {
+    pub theme: String,
+    pub locale: String,
+    pub log_to_file: bool,
+    pub tls_strict: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording_dir: Option<PathBuf>,
+    pub camera_item_size: u16,
+    pub sidebar_collapsed: bool,
+    pub ptz_speed: f32,
+}
+
+pub fn save_config(cfg: ConfigOut) {
     ensure_dir();
 
-    // Save theme/locale/log/tls preference to config.toml (no credentials)
+    // Save application preferences to config.toml (no credentials).
     if let Some(path) = config_path() {
-        #[derive(Serialize)]
-        struct ConfigOut {
-            theme: String,
-            locale: String,
-            log_to_file: bool,
-            tls_strict: bool,
-        }
-        let cfg = ConfigOut {
-            theme: theme_to_str(theme).to_string(),
-            locale: locale_to_str(locale).to_string(),
-            log_to_file,
-            tls_strict,
-        };
         match toml::to_string_pretty(&cfg) {
             Ok(content) => {
                 if let Err(e) = std::fs::write(&path, content) {
@@ -931,7 +974,7 @@ pub fn theme_from_str(s: &str) -> Theme {
     }
 }
 
-fn theme_to_str(t: Theme) -> &'static str {
+pub(crate) fn theme_to_str(t: Theme) -> &'static str {
     match t {
         Theme::Dark => "dark",
         Theme::Light => "light",
@@ -947,7 +990,7 @@ pub fn locale_from_str(s: &str) -> Locale {
     }
 }
 
-fn locale_to_str(l: Locale) -> &'static str {
+pub(crate) fn locale_to_str(l: Locale) -> &'static str {
     match l {
         Locale::En => "en",
         Locale::ZhTw => "zh_tw",
@@ -958,6 +1001,7 @@ fn locale_to_str(l: Locale) -> &'static str {
 pub fn view_to_str(v: View) -> &'static str {
     match v {
         View::Welcome => "welcome",
+        View::AppSettings => "app_settings",
         View::DeviceSettings => "device_settings",
         View::LiveVideo => "live_video",
         View::ImagingSettings => "imaging",
@@ -972,6 +1016,7 @@ pub fn view_to_str(v: View) -> &'static str {
 
 pub fn view_from_str(s: &str) -> View {
     match s {
+        "app_settings" => View::AppSettings,
         "device_settings" => View::DeviceSettings,
         "live_video" => View::LiveVideo,
         "imaging" => View::ImagingSettings,
@@ -988,6 +1033,8 @@ pub fn view_from_str(s: &str) -> View {
 pub fn settings_tab_to_str(t: SettingsTab) -> &'static str {
     match t {
         SettingsTab::Identification => "identification",
+        SettingsTab::Imaging => "imaging",
+        SettingsTab::Profiles => "profiles",
         SettingsTab::Network => "network",
         SettingsTab::Time => "time",
         SettingsTab::Users => "users",
@@ -999,6 +1046,8 @@ pub fn settings_tab_to_str(t: SettingsTab) -> &'static str {
 
 pub fn settings_tab_from_str(s: &str) -> SettingsTab {
     match s {
+        "imaging" => SettingsTab::Imaging,
+        "profiles" => SettingsTab::Profiles,
         "network" => SettingsTab::Network,
         "time" => SettingsTab::Time,
         "users" => SettingsTab::Users,

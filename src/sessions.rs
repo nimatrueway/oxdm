@@ -49,6 +49,26 @@ pub async fn get(
     pool().get(addr, username, password).await
 }
 
+#[derive(Default)]
+pub(crate) enum OperationSupport {
+    #[default]
+    Unknown,
+    Supported,
+    Unsupported(String),
+}
+
+type SharedOperationSupport = Arc<tokio::sync::Mutex<OperationSupport>>;
+
+pub(crate) fn operation_support(
+    addr: &str,
+    username: Option<&str>,
+    password: Option<&str>,
+    method: &'static str,
+    token: &str,
+) -> SharedOperationSupport {
+    pool().operation_support(addr, username, password, method, token)
+}
+
 /// Drop every cached session for `addr`.
 ///
 /// Call this when the device's credentials change (so the next API
@@ -78,6 +98,14 @@ pub fn invalidate_all() {
 #[derive(Default)]
 pub struct SessionPool {
     sessions: Mutex<HashMap<SessionKey, Arc<OnvifSession>>>,
+    operations: Mutex<HashMap<OperationKey, SharedOperationSupport>>,
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct OperationKey {
+    session: SessionKey,
+    method: &'static str,
+    token: String,
 }
 
 /// Cache key. We hash credentials rather than storing them so we
@@ -106,6 +134,27 @@ impl SessionKey {
 impl SessionPool {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn operation_support(
+        &self,
+        addr: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        method: &'static str,
+        token: &str,
+    ) -> SharedOperationSupport {
+        let key = OperationKey {
+            session: SessionKey::new(addr, username, password),
+            method,
+            token: token.to_string(),
+        };
+        self.operations
+            .lock()
+            .unwrap()
+            .entry(key)
+            .or_default()
+            .clone()
     }
 
     pub async fn get(
@@ -137,10 +186,15 @@ impl SessionPool {
 
     pub fn invalidate(&self, addr: &str) {
         self.sessions.lock().unwrap().retain(|k, _| k.addr != addr);
+        self.operations
+            .lock()
+            .unwrap()
+            .retain(|key, _| key.session.addr != addr);
     }
 
     pub fn invalidate_all(&self) {
         self.sessions.lock().unwrap().clear();
+        self.operations.lock().unwrap().clear();
     }
 }
 

@@ -2,7 +2,7 @@
 use crate::api;
 use crate::components::{Icon, TabError};
 use crate::i18n;
-use crate::state::{Credentials, Ctx};
+use crate::state::{Credentials, Ctx, View};
 use crate::video::{self, EmbedKind};
 use dioxus::prelude::*;
 use oxvif::RecordingInformation;
@@ -35,6 +35,13 @@ pub fn RecordingsView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Ele
     rsx! {
         div { class: "recordings-view",
             div { class: "content-header",
+                button {
+                    class: "icon-btn",
+                    title: i18n::t(locale, "workspace_back_video"),
+                    aria_label: i18n::t(locale, "workspace_back_video"),
+                    onclick: move |_| ctx.view.clone().set(View::LiveVideo),
+                    Icon { name: "arrow-left", size: 16 }
+                }
                 Icon { name: "clock", size: 20 }
                 span { class: "content-title", {i18n::t(locale, "nav_recordings")} }
             }

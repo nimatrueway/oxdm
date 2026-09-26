@@ -20,10 +20,6 @@ pub fn AboutDialog(open: Signal<bool>) -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
 
-    let log_path = crate::log_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-
     rsx! {
         DialogOverlay {
             on_close: {
@@ -33,7 +29,7 @@ pub fn AboutDialog(open: Signal<bool>) -> Element {
             inner_class: "dialog about-dialog".to_string(),
 
             div { class: "dialog-header",
-                span { class: "dialog-title", "About OxDM" }
+                span { class: "dialog-title", {i18n::t(locale, "app_settings_about")} }
             }
                 div { class: "dialog-body",
                     div { class: "about-icon", LensBrand { size: 72 } }
@@ -53,45 +49,6 @@ pub fn AboutDialog(open: Signal<bool>) -> Element {
                         },
                         {i18n::t(locale, "about_support")}
                     }
-                    if !log_path.is_empty() {
-                        div { class: "about-logpath",
-                            span { class: "about-logpath-label", {i18n::t(locale, "about_log_dir")} }
-                            code { "{log_path}" }
-                        }
-                    }
-                    label { class: "about-log-toggle",
-                        input {
-                            r#type: "checkbox",
-                            checked: *ctx.log_to_file.read(),
-                            onchange: {
-                                let mut log_sig = ctx.log_to_file;
-                                move |evt: Event<FormData>| log_sig.set(evt.checked())
-                            },
-                        }
-                        span { class: "about-log-toggle-text",
-                            {i18n::t(locale, "about_log_to_file")}
-                        }
-                        span { class: "about-log-toggle-hint",
-                            {i18n::t(locale, "about_log_takes_effect")}
-                        }
-                    }
-                    label { class: "about-log-toggle",
-                        input {
-                            r#type: "checkbox",
-                            checked: *ctx.tls_strict.read(),
-                            onchange: {
-                                let mut sig = ctx.tls_strict;
-                                move |evt: Event<FormData>| sig.set(evt.checked())
-                            },
-                        }
-                        span { class: "about-log-toggle-text",
-                            {i18n::t(locale, "about_tls_strict")}
-                        }
-                        span { class: "about-log-toggle-hint",
-                            {i18n::t(locale, "about_tls_strict_hint")}
-                        }
-                    }
-
                     div { class: "about-shortcuts",
                         div { class: "about-shortcuts-title", {i18n::t(locale, "about_shortcuts")} }
                         div { class: "about-shortcut",
@@ -117,17 +74,6 @@ pub fn AboutDialog(open: Signal<bool>) -> Element {
                     }
                 }
                 div { class: "dialog-footer about-footer",
-                    button {
-                        class: "btn btn-md btn-ghost",
-                        onclick: move |_| {
-                            if let Some(dir) = crate::log_dir() {
-                                if let Err(e) = opener::open(&dir) {
-                                    tracing::warn!(error = %e, "open log dir failed");
-                                }
-                            }
-                        },
-                        {i18n::t(locale, "about_open_logs")}
-                    }
                     button {
                         class: "btn btn-md btn-ghost",
                         onclick: move |_| {

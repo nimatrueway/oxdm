@@ -94,7 +94,9 @@ class OxdmStream extends HTMLElement {
         this.bar.append(this.playBtn, badge, this.muteBtn);
         // Frameless PiP starts a window drag on mousedown; keep clicks on
         // the controls from doing that.
-        this.bar.addEventListener('mousedown', (e) => e.stopPropagation());
+        for (const button of [this.playBtn, this.muteBtn]) {
+            button.addEventListener('mousedown', (event) => event.stopPropagation());
+        }
         this.appendChild(this.bar);
         this.refreshBar();
     }

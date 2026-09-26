@@ -4,114 +4,167 @@ use crate::components::{ContextMenu, CtxMenuItem, Icon, RenameGroupDialog};
 use crate::i18n;
 use crate::state::{
     new_group_id, ConfirmDialog, Credentials, Ctx, HealthDeviceRef, HealthGroup, HealthListSel,
-    View,
+    SettingsTab, View, WorkspaceTab,
 };
 use dioxus::prelude::*;
 use tracing::{debug, warn};
 
 #[component]
-pub fn DevicePanel() -> Element {
+pub fn DevicePanel(gate: api::DeviceGate) -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
-
-    // Capability probe backing the nav gate. Declared *before* the early
-    // returns below, because a hook skipped on one render and run on the next
-    // corrupts Dioxus' hook order.
-    //
-    // Tagged with the addr it was fetched for, exactly like `ProfileThumbnails`
-    // below: an untagged result would let the previous device's gate hide a
-    // link the newly-selected one supports, for one frame and with no error.
-    let gate_res = use_resource(move || {
-        let devices = ctx.devices.read();
-        let dev = ctx.selected.read().and_then(|i| devices.get(i)).cloned();
-        let creds = dev.as_ref().map(|d| ctx.credentials_for(d));
-        let addr = dev.map(|d| d.addr).unwrap_or_default();
-        drop(devices);
-        async move {
-            match creds {
-                Some(c) if !addr.is_empty() => (addr.clone(), api::device_gate(&addr, &c).await),
-                _ => (addr, api::DeviceGate::permissive()),
-            }
-        }
-    });
-
-    // Health mode: this middle pane becomes the group-navigation "basket"
-    // (All devices + saved groups) instead of the selected device's nav.
-    if *ctx.view.read() == View::HealthOverview {
-        return rsx! { HealthGroupsPanel {} };
-    }
-
-    let devices = ctx.devices.read();
-    let selected = *ctx.selected.read();
-
-    let Some(idx) = selected else {
-        return rsx! {
-            div { class: "device-panel device-panel--empty",
-                span { class: "panel-empty-hint", {i18n::t(locale, "select_device")} }
-            }
-        };
-    };
-
-    let Some(dev) = devices.get(idx) else {
-        return rsx! { div { class: "device-panel" } };
-    };
-
-    let dev_name = dev.name.clone();
-    let dev_addr = dev.addr.clone();
-    drop(devices);
-
-    // Offer everything until the probe answers *for this device*. A pending
-    // resource and a stale one are the same thing here: we have not been told
-    // "no", so we do not hide.
-    let gate = match &*gate_res.read_unchecked() {
-        Some((res_addr, g)) if res_addr == &dev_addr => *g,
-        _ => api::DeviceGate::permissive(),
-    };
+    let active = ctx.view.read().workspace_tab(*ctx.settings_tab.read());
 
     rsx! {
-        div { class: "device-panel",
-
-            div { class: "panel-header",
-                div { class: "panel-device-icon",
-                    Icon { name: "camera", size: 26 }
+        nav { class: "camera-actions",
+            for (tab, icon, label, target) in [
+                (WorkspaceTab::Recordings, "clock", "nav_recordings", View::Recordings),
+                (WorkspaceTab::Settings, "settings", "nav_settings", View::DeviceSettings),
+            ] {
+                if tab != WorkspaceTab::Recordings || gate.recordings || active == Some(tab) {
+                    button {
+                        class: "icon-btn",
+                        title: i18n::t(locale, label),
+                        aria_label: i18n::t(locale, label),
+                        disabled: ctx.selected.read().is_none(),
+                        onclick: move |_| {
+                            ctx.settings_tab.clone().set(SettingsTab::Identification);
+                            ctx.view.clone().set(target);
+                        },
+                        Icon { name: icon, size: 16 }
+                    }
                 }
-                div { class: "panel-device-name", "{dev_name}" }
-            }
-
-            div { class: "panel-section",
-                div { class: "panel-section-title", {i18n::t(locale, "section_general")} }
-                // Device management is mandatory on a conformant device — there
-                // is nothing to gate it on, and nothing to fall back to if it
-                // were missing.
-                NavLink { view: View::DeviceSettings, icon: "settings", label: i18n::t(locale, "nav_settings") }
-                if gate.osd {
-                    NavLink { view: View::Osd,        icon: "info",     label: i18n::t(locale, "nav_osd") }
-                }
-                if gate.io {
-                    NavLink { view: View::IoControl,  icon: "zap",      label: i18n::t(locale, "nav_io_control") }
-                }
-                if gate.events {
-                    NavLink { view: View::Events,     icon: "bell",     label: i18n::t(locale, "nav_events") }
-                }
-                if gate.recordings {
-                    NavLink { view: View::Recordings, icon: "clock",    label: i18n::t(locale, "nav_recordings") }
-                }
-            }
-
-            // ── NVT profile thumbnails ──────────────────────────────────────
-            div { class: "panel-section panel-thumbnails",
-                div { class: "panel-section-title", "NVT" }
-                ProfileThumbnails { gate }
             }
         }
     }
 }
 
-/// Health mode's middle pane: "All devices" + one entry per saved group.
+#[component]
+pub fn ProfileSelector(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Element {
+    let ctx = use_context::<Ctx>();
+    let locale = *ctx.locale.read();
+    let mut profiles_res = use_resource(move || {
+        let addr = addr.read().clone();
+        let creds = creds.read().clone();
+        async move {
+            let mut profiles = api::get_profiles(&addr, &creds).await?;
+            let hidden = crate::persist::load_hidden_profiles();
+            profiles.retain(|profile| {
+                profile.video_encoder_token.is_some()
+                    && !hidden.contains(&crate::persist::hidden_profile_key(&addr, &profile.token))
+            });
+            Ok::<_, String>((addr, profiles))
+        }
+    });
+
+    use_effect(move || {
+        let selected = ctx.selected_profile.read().clone();
+        let next = match &*profiles_res.read() {
+            Some(Ok((loaded_addr, profiles))) if loaded_addr == &*addr.read() => {
+                crate::state::preferred_video_profile(profiles, selected.as_deref())
+                    .map(|profile| profile.token.clone())
+            }
+            _ => return,
+        };
+        if selected != next {
+            ctx.selected_profile.clone().set(next);
+        }
+    });
+
+    let selected = ctx.selected_profile.read().clone();
+    let addr_now = addr.read().clone();
+
+    rsx! {
+        div { class: "stream-selector",
+            match &*profiles_res.read_unchecked() {
+                None => rsx! { span { class: "stream-selector-message", {i18n::t(locale, "loading")} } },
+                Some(Err(error)) => rsx! {
+                    span { class: "stream-selector-error", title: "{error}", "{error}" }
+                    button {
+                        class: "icon-btn",
+                        title: i18n::t(locale, "btn_retry"),
+                        aria_label: i18n::t(locale, "btn_retry"),
+                        onclick: move |_| profiles_res.restart(),
+                        Icon { name: "refresh-cw", size: 15 }
+                    }
+                },
+                Some(Ok((loaded_addr, _))) if loaded_addr != &addr_now => rsx! {
+                    span { class: "stream-selector-message", {i18n::t(locale, "loading")} }
+                },
+                Some(Ok((_, profiles))) => {
+                    let current = crate::state::preferred_video_profile(profiles, selected.as_deref());
+                    let current_token = current.map(|profile| profile.token.clone()).unwrap_or_default();
+                    let current_source = current.and_then(|profile| profile.video_source_token.clone()).unwrap_or_default();
+                    let mut sources = Vec::new();
+                    for profile in profiles {
+                        let source = profile.video_source_token.clone().unwrap_or_default();
+                        if !sources.contains(&source) {
+                            sources.push(source);
+                        }
+                    }
+                    let source_profiles = profiles.clone();
+                    rsx! {
+                        if profiles.is_empty() {
+                            span { class: "stream-selector-message", {i18n::t(locale, "no_profiles")} }
+                        } else {
+                            if sources.len() > 1 {
+                                label { class: "stream-field",
+                                    span { {i18n::t(locale, "workspace_lens")} }
+                                    select {
+                                        class: "stream-select",
+                                        value: current_source.clone(),
+                                        onchange: move |event| {
+                                            let source = event.value();
+                                            if let Some(profile) = source_profiles.iter().find(|profile| profile.video_source_token.as_deref().unwrap_or_default() == source) {
+                                                ctx.selected_profile.clone().set(Some(profile.token.clone()));
+                                            }
+                                        },
+                                        for source in sources {
+                                            option {
+                                                value: source.clone(),
+                                                if source.is_empty() { {i18n::t(locale, "workspace_unassigned")} } else { "{source}" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            label { class: "stream-field",
+                                span { {i18n::t(locale, "workspace_stream")} }
+                                select {
+                                    class: "stream-select",
+                                    value: current_token,
+                                    onchange: move |event| ctx.selected_profile.clone().set(Some(event.value())),
+                                    for profile in profiles.iter().filter(|profile| profile.video_source_token.as_deref().unwrap_or_default() == current_source) {
+                                        option {
+                                            value: profile.token.clone(),
+                                            if profile.name.is_empty() { "{profile.token}" } else { "{profile.name}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+            button {
+                class: "icon-btn",
+                title: i18n::t(locale, "workspace_profiles"),
+                aria_label: i18n::t(locale, "workspace_profiles"),
+                onclick: move |_| {
+                    ctx.settings_tab.clone().set(SettingsTab::Profiles);
+                    ctx.view.clone().set(View::DeviceSettings);
+                },
+                Icon { name: "settings", size: 15 }
+            }
+        }
+    }
+}
+
+/// Health mode's sidebar: "All devices" + one entry per saved group.
 /// Clicking sets `ctx.health_list` (the Health Overview reads it); right-click
 /// a group to rename / delete.
 #[component]
-fn HealthGroupsPanel() -> Element {
+pub fn HealthGroupsPanel() -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
     let mut ctx_menu: Signal<Option<(f64, f64, String)>> = use_signal(|| None);
@@ -177,14 +230,7 @@ fn HealthGroupsPanel() -> Element {
     });
 
     rsx! {
-        div { class: "device-panel",
-            div { class: "panel-header",
-                div { class: "panel-device-icon",
-                    Icon { name: "activity", size: 26 }
-                }
-                div { class: "panel-device-name", {i18n::t(locale, "hbatch_title")} }
-            }
-
+        div { class: "health-groups-panel",
             div { class: "panel-section",
                 button {
                     class: if is_all { "group-sb-item group-sb-item--active" } else { "group-sb-item" },
@@ -302,29 +348,6 @@ fn HealthGroupsPanel() -> Element {
     }
 }
 
-#[component]
-fn NavLink(view: View, icon: &'static str, label: &'static str) -> Element {
-    let ctx = use_context::<Ctx>();
-    let mut view_sig = ctx.view;
-    let is_active = *ctx.view.read() == view;
-    let cls = if is_active {
-        "nav-link nav-link--active"
-    } else {
-        "nav-link"
-    };
-
-    rsx! {
-        button {
-            class: cls,
-            onclick: move |_| view_sig.set(view),
-            span { class: "nav-link-icon",
-                Icon { name: icon, size: 16 }
-            }
-            "{label}"
-        }
-    }
-}
-
 // ── NVT Profile Thumbnails ──────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -349,7 +372,7 @@ struct ProfileInfo {
 }
 
 #[component]
-fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
+pub fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
 
@@ -704,31 +727,19 @@ fn ProfileCard(
                     title: if matches!(&*data_uri_for_save.read_unchecked(), Some(Ok(_))) { i18n::t(locale, "snapshot_save") } else { i18n::t(locale, "snapshot_save_no_image") },
                     onclick: move |e| {
                         e.stop_propagation();
-                        // Snapshot only the *current* data URI value;
-                        // fire-and-forget the save so the file dialog
-                        // doesn't block the auto-refresh tick.
                         let snap = match &*data_uri_for_save.read_unchecked() {
                             Some(Ok(uri)) => uri.clone(),
                             _ => return,
                         };
-                        let default_name =
-                            format!("{}.jpg", crate::util::sanitize_filename(&name_for_save));
+                        let name = name_for_save.clone();
+                        let directory = crate::persist::snapshot_directory(ctx.snapshot_dir.read().as_deref());
                         let toast_ctx = ctx;
                         let saved_label = i18n::t(locale, "snapshot_saved").to_string();
                         let failed_label = i18n::t(locale, "snapshot_save_failed").to_string();
                         spawn(async move {
-                            let Some(handle) = rfd::AsyncFileDialog::new()
-                                .set_file_name(&default_name)
-                                .add_filter("JPEG", &["jpg", "jpeg"])
-                                .save_file()
-                                .await
-                            else {
-                                return;
-                            };
-                            let path = handle.path().to_path_buf();
                             match crate::util::decode_jpeg_data_uri(&snap) {
-                                Some(bytes) => match std::fs::write(&path, &bytes) {
-                                    Ok(()) => {
+                                Some(bytes) => match crate::util::save_snapshot(&directory, &name, &bytes) {
+                                    Ok(path) => {
                                         tracing::info!(path = %path.display(), bytes = bytes.len(), "snapshot saved");
                                         toast_ctx.push_toast(
                                             crate::state::ToastLevel::Success,
@@ -736,7 +747,7 @@ fn ProfileCard(
                                         );
                                     }
                                     Err(e) => {
-                                        tracing::warn!(error = %e, path = %path.display(), "snapshot save failed");
+                                        tracing::warn!(error = %e, directory = %directory.display(), "snapshot save failed");
                                         toast_ctx.push_toast(
                                             crate::state::ToastLevel::Error,
                                             format!("{failed_label}: {e}"),

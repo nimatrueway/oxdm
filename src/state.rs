@@ -1,6 +1,11 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+pub fn clamp_sidebar_width(width: f64, viewport_width: f64) -> f64 {
+    width.clamp(200.0, (viewport_width - 405.0).clamp(200.0, 560.0))
+}
 
 // ── Theme ───────────────────────────────────────────────────────────────────
 
@@ -12,14 +17,6 @@ pub enum Theme {
 }
 
 impl Theme {
-    pub fn next(self) -> Self {
-        match self {
-            Self::Dark => Self::Light,
-            Self::Light => Self::Classic,
-            Self::Classic => Self::Dark,
-        }
-    }
-
     pub fn css_class(self) -> &'static str {
         match self {
             Self::Dark => "shell theme-dark",
@@ -38,24 +35,6 @@ pub enum Locale {
     Ru,
 }
 
-impl Locale {
-    pub fn next(self) -> Self {
-        match self {
-            Self::En => Self::ZhTw,
-            Self::ZhTw => Self::Ru,
-            Self::Ru => Self::En,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::En => "EN",
-            Self::ZhTw => "\u{4E2D}",
-            Self::Ru => "RU",
-        }
-    }
-}
-
 /// Which target the Health Overview is showing — shared between the sidebar
 /// Groups tab (which selects it) and the Health view (which renders it).
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +50,7 @@ pub enum HealthListSel {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum View {
     Welcome,
+    AppSettings,
     DeviceSettings,
     LiveVideo,
     ImagingSettings,
@@ -85,8 +65,30 @@ pub enum View {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WorkspaceTab {
+    Live,
+    Recordings,
+    Settings,
+}
+
+impl View {
+    pub fn workspace_tab(self, _settings_tab: SettingsTab) -> Option<WorkspaceTab> {
+        match self {
+            Self::Welcome | Self::AppSettings | Self::HealthOverview => None,
+            Self::LiveVideo | Self::ImagingSettings | Self::PtzControl => Some(WorkspaceTab::Live),
+            Self::Recordings => Some(WorkspaceTab::Recordings),
+            Self::DeviceSettings | Self::Events | Self::Osd | Self::IoControl => {
+                Some(WorkspaceTab::Settings)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SettingsTab {
     Identification,
+    Imaging,
+    Profiles,
     Network,
     Time,
     Users,
@@ -94,6 +96,22 @@ pub enum SettingsTab {
     Health,
     /// Structural quirk diff — only reachable for a served clone device.
     Quirks,
+}
+
+pub fn preferred_video_profile<'a>(
+    profiles: &'a [oxvif::MediaProfile],
+    selected: Option<&str>,
+) -> Option<&'a oxvif::MediaProfile> {
+    profiles
+        .iter()
+        .find(|profile| {
+            Some(profile.token.as_str()) == selected && profile.video_encoder_token.is_some()
+        })
+        .or_else(|| {
+            profiles
+                .iter()
+                .find(|profile| profile.video_encoder_token.is_some())
+        })
 }
 
 // ── Auth status ─────────────────────────────────────────────────────────────
@@ -325,6 +343,11 @@ pub struct Ctx {
     /// Toggled in the About dialog, saved to config.toml, applies
     /// immediately (next snapshot fetch reads the global atomic).
     pub tls_strict: Signal<bool>,
+    pub snapshot_dir: Signal<Option<PathBuf>>,
+    pub recording_dir: Signal<Option<PathBuf>>,
+    pub camera_item_size: Signal<u16>,
+    pub sidebar_collapsed: Signal<bool>,
+    pub ptz_speed: Signal<f32>,
     /// False until the keychain blob + devices.toml + healthcheck.toml have
     /// been read. The keychain read blocks on the OS permission prompt, so it
     /// runs off the render path; the save effects stay inert until this flips

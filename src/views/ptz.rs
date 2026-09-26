@@ -1,36 +1,316 @@
 #![allow(non_snake_case)]
 use crate::components::Icon;
 use crate::state::{Credentials, Ctx, ToastLevel};
-use crate::views::live_video::{LiveModeTabs, LiveVideoMode, LiveVideoStage};
 use crate::{api, i18n};
 use dioxus::prelude::*;
 
-/// Preview pane height bounds (px) for the draggable splitter. The default
-/// matches `.imaging-preview`'s fixed 320px so the view opens as before.
-const PREVIEW_DEFAULT_H: f64 = 320.0;
-const PREVIEW_MIN_H: f64 = 120.0;
-const PREVIEW_MAX_H: f64 = 1600.0;
+struct PanGesture {
+    pointer: i32,
+    origin: (f64, f64),
+    speed: f32,
+    updates: tokio::sync::watch::Sender<(f32, f32)>,
+}
 
-/// PTZ control panel.
-///
-/// Layout mirrors `ImagingView`: live preview on top, controls below, with a
-/// draggable splitter between them. The controls split into a directional
-/// pad + zoom column on the left and a preset list on the right; the whole
-/// controls area scrolls vertically when it doesn't fit.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub struct PanPreview {
+    generation: u64,
+    active: bool,
+    before: Option<(Option<f32>, Option<f32>)>,
+}
+
 #[component]
-pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Element {
+pub fn DragPanButton(
+    addr: ReadSignal<String>,
+    creds: Memo<Credentials>,
+    speed: Signal<f32>,
+    mut preview: Signal<PanPreview>,
+    enabled: bool,
+) -> Element {
+    let ctx = use_context::<Ctx>();
+    let locale = *ctx.locale.read();
+    let mut gesture = use_signal(|| None::<PanGesture>);
+    let window_id = dioxus::desktop::window().window.id();
+    let _focus_handler = dioxus::desktop::use_wry_event_handler(move |event, _| {
+        if matches!(
+            event,
+            dioxus::desktop::tao::event::Event::WindowEvent {
+                window_id: changed_window,
+                event: dioxus::desktop::tao::event::WindowEvent::Focused(false),
+                ..
+            } if *changed_window == window_id
+        ) {
+            gesture.set(None);
+        }
+    });
+    use_effect(move || {
+        let _addr = addr.read();
+        let _creds = creds.read();
+        let _profile = ctx.selected_profile.read();
+        gesture.set(None);
+        preview.with_mut(|state| {
+            *state = PanPreview {
+                generation: state.generation.wrapping_add(1),
+                ..PanPreview::default()
+            };
+        });
+    });
+    use_effect(move || {
+        let active = gesture.read().is_some();
+        let changed = preview.peek().active != active;
+        if changed {
+            preview.write().active = active;
+        }
+    });
+
+    rsx! {
+        button {
+            id: "camera-pan-control",
+            class: if gesture.read().is_some() { "icon-btn live-pan-control live-control-toggle--active" } else { "icon-btn live-pan-control" },
+            title: i18n::t(locale, "workspace_pan_drag"),
+            aria_label: i18n::t(locale, "workspace_pan_drag"),
+            aria_pressed: gesture.read().is_some(),
+            disabled: !enabled,
+            onmounted: move |_| {
+                let _ = document::eval(r#"
+                    const button = document.getElementById('camera-pan-control');
+                    button?.addEventListener('pointerdown', event => {
+                        if (event.button === 0 && !button.disabled) {
+                            event.preventDefault();
+                            button.setPointerCapture(event.pointerId);
+                        }
+                    });
+                "#);
+            },
+            onpointerdown: move |event: Event<PointerData>| {
+                if event.data().trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary)
+                    || gesture.peek().is_some()
+                {
+                    return;
+                }
+                event.prevent_default();
+                event.stop_propagation();
+                let Some(profile) = ctx.selected_profile.peek().clone() else { return; };
+                let position = event.data().client_coordinates();
+                let (updates, receiver) = tokio::sync::watch::channel((0.0, 0.0));
+                let camera_addr = addr.read().clone();
+                let camera_creds = creds.read().clone();
+                let generation = preview.peek().generation.wrapping_add(1);
+                preview.set(PanPreview { generation, active: true, before: None });
+                gesture.set(Some(PanGesture {
+                    pointer: event.data().pointer_id(),
+                    origin: (position.x, position.y),
+                    speed: *speed.peek(),
+                    updates,
+                }));
+                spawn(async move {
+                    let before = tokio::time::timeout(
+                        std::time::Duration::from_millis(250),
+                        api::ptz_get_status(&camera_addr, &camera_creds, &profile),
+                    ).await.ok().and_then(Result::ok).map(|status| (status.pan, status.tilt));
+                    preview.with_mut(|state| {
+                        if state.generation == generation {
+                            state.before = before;
+                        }
+                    });
+                    if receiver.has_changed().is_err() {
+                        return;
+                    }
+                    let worker = tokio::spawn(api::ptz_drag(camera_addr, camera_creds, profile, receiver));
+                    match worker.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => ctx.push_toast(ToastLevel::Error, error),
+                        Err(error) => tracing::warn!(%error, "pan gesture task failed"),
+                    }
+                });
+            },
+            onpointermove: move |event: Event<PointerData>| {
+                event.stop_propagation();
+                if let Some(drag) = gesture.peek().as_ref() {
+                    if event.data().pointer_id() == drag.pointer {
+                        let position = event.data().client_coordinates();
+                        let _ = drag.updates.send(api::ptz_drag_velocity(position.x - drag.origin.0, position.y - drag.origin.1, drag.speed));
+                    }
+                }
+            },
+            onpointerup: move |event| {
+                event.stop_propagation();
+                gesture.set(None);
+            },
+            onpointercancel: move |_| gesture.set(None),
+            onlostpointercapture: move |_| gesture.set(None),
+            onblur: move |_| gesture.set(None),
+            onkeydown: move |event| {
+                if event.key() == Key::Escape {
+                    event.stop_propagation();
+                    gesture.set(None);
+                }
+            },
+            Icon { name: "move", size: 16 }
+        }
+    }
+}
+
+#[component]
+pub fn PanPositionOverlay(
+    addr: ReadSignal<String>,
+    creds: Memo<Credentials>,
+    preview: Signal<PanPreview>,
+) -> Element {
+    let ctx = use_context::<Ctx>();
+    let locale = *ctx.locale.read();
+    let mut visible = use_signal(|| false);
+    let mut position = use_signal(|| None::<(Option<f32>, Option<f32>)>);
+    let mut pending = use_signal(|| false);
+    let mut generation = use_signal(|| 0_u64);
+    let limits = use_resource(move || {
+        let camera_addr = addr.read().clone();
+        let camera_creds = creds.read().clone();
+        let profile = ctx.selected_profile.read().clone();
+        async move {
+            let profile = profile.ok_or_else(|| "no_profile".to_string())?;
+            api::ptz_node_for_profile(&camera_addr, &camera_creds, &profile)
+                .await
+                .map(|node| api::ptz_absolute_limits(&node))
+        }
+    });
+    let _position_updates = use_resource(move || {
+        let state = *preview.read();
+        let camera_addr = addr.read().clone();
+        let camera_creds = creds.read().clone();
+        let profile = ctx.selected_profile.read().clone();
+        async move {
+            let Some(profile) = profile else {
+                visible.set(false);
+                return;
+            };
+            if !state.active && state.before.is_none() {
+                visible.set(false);
+                position.set(None);
+                return;
+            }
+            let changed = *generation.peek() != state.generation;
+            if changed {
+                position.set(None);
+                generation.set(state.generation);
+            }
+            visible.set(true);
+            pending.set(true);
+            let expires = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let current = tokio::time::timeout(
+                    std::time::Duration::from_millis(750),
+                    api::ptz_get_status(&camera_addr, &camera_creds, &profile),
+                )
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .map(|status| (status.pan, status.tilt));
+                position.set(current);
+                pending.set(false);
+                if !state.active && std::time::Instant::now() >= expires {
+                    visible.set(false);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
+        }
+    });
+
+    let loading = pending() || limits.read().is_none();
+    let ranges = limits
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .copied()
+        .unwrap_or_default();
+    let (pan, tilt) = position().unwrap_or((None, None));
+    let (before_pan, before_tilt) = preview.read().before.unwrap_or((None, None));
+    let pan = api::ptz_axis_fraction(pan, ranges.pan);
+    let tilt = api::ptz_axis_fraction(tilt, ranges.tilt);
+    let before_pan = api::ptz_axis_fraction(before_pan, ranges.pan);
+    let before_tilt = api::ptz_axis_fraction(before_tilt, ranges.tilt);
+    let percentage = |value: Option<f64>| {
+        value
+            .map(|value| format!("{:.0}%", value * 100.0))
+            .unwrap_or_else(|| "--".to_string())
+    };
+    let change = |now: Option<f64>, before: Option<f64>| {
+        now.zip(before)
+            .map(|(now, before)| format!("{:+.0}%", (now - before) * 100.0))
+            .unwrap_or_else(|| "--".to_string())
+    };
+
+    rsx! {
+        if visible() {
+            div { class: "pan-overlay", role: "figure", aria_label: i18n::t(locale, "ptz_travel"),
+                div { class: "pan-overlay-head",
+                    span { class: "pan-overlay-title", {i18n::t(locale, "ptz_status")} }
+                    div { class: "pan-overlay-legend",
+                        span { class: "pan-overlay-legend-before", {i18n::t(locale, "ptz_before")} }
+                        span { class: "pan-overlay-legend-now", {i18n::t(locale, "ptz_now")} }
+                    }
+                }
+                div { class: "pan-overlay-map",
+                    for (direction, icon, label, room) in [
+                        ("left", "arrow-left", "ptz_room_left", pan),
+                        ("right", "arrow-right", "ptz_room_right", pan.map(|value| 1.0 - value)),
+                        ("up", "arrow-up", "ptz_room_up", tilt.map(|value| 1.0 - value)),
+                        ("down", "arrow-down", "ptz_room_down", tilt),
+                    ] {
+                        span { key: "{direction}", class: "pan-overlay-room pan-overlay-room--{direction}", aria_label: format!("{}: {}", i18n::t(locale, label), percentage(room)),
+                            Icon { name: icon, size: 11 }
+                            span { {percentage(room)} }
+                        }
+                    }
+                    div { class: "pan-overlay-plot",
+                        if let (Some(start_pan), Some(start_tilt), Some(current_pan), Some(current_tilt)) = (before_pan, before_tilt, pan, tilt) {
+                            svg { class: "pan-overlay-link", view_box: "0 0 100 100", preserve_aspect_ratio: "none", "aria-hidden": "true",
+                                line { x1: "{start_pan * 100.0}", y1: "{(1.0 - start_tilt) * 100.0}", x2: "{current_pan * 100.0}", y2: "{(1.0 - current_tilt) * 100.0}" }
+                            }
+                        }
+                        for (marker, horizontal, vertical) in [("before", before_pan, before_tilt), ("now", pan, tilt)] {
+                            match (horizontal, vertical) {
+                                (Some(horizontal), Some(vertical)) => rsx! {
+                                    span { class: "pan-overlay-position pan-overlay-position--point pan-overlay-position--{marker}", style: "left: {horizontal * 100.0}%; top: {(1.0 - vertical) * 100.0}%;" }
+                                },
+                                (Some(horizontal), None) => rsx! {
+                                    span { class: "pan-overlay-position pan-overlay-position--pan pan-overlay-position--{marker}", style: "left: {horizontal * 100.0}%;" }
+                                },
+                                (None, Some(vertical)) => rsx! {
+                                    span { class: "pan-overlay-position pan-overlay-position--tilt pan-overlay-position--{marker}", style: "top: {(1.0 - vertical) * 100.0}%;" }
+                                },
+                                _ => rsx! {},
+                            }
+                        }
+                        if pan.is_none() && tilt.is_none() {
+                            span { class: "pan-overlay-empty", role: "status", aria_label: i18n::t(locale, if loading { "loading" } else { "ptz_travel_unavailable" }),
+                                span { class: "pan-overlay-empty-full", {i18n::t(locale, if loading { "loading" } else { "ptz_travel_unavailable" })} }
+                                span { class: "pan-overlay-empty-compact", aria_hidden: "true", "--" }
+                            }
+                        }
+                    }
+                }
+                div { class: "pan-overlay-delta",
+                    span { {format!("{} {}", i18n::t(locale, "ptz_axis_pan"), change(pan, before_pan))} }
+                    span { {format!("{} {}", i18n::t(locale, "ptz_axis_tilt"), change(tilt, before_tilt))} }
+                }
+            }
+        }
+    }
+}
+
+/// PTZ controls displayed beside the shared live player.
+#[component]
+pub fn PtzControlView(
+    addr: ReadSignal<String>,
+    creds: Memo<Credentials>,
+    speed: Signal<f32>,
+) -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
     let profile_sig = ctx.selected_profile;
 
-    let speed = use_signal(|| 0.5_f32);
     let preset_search = use_signal(String::new);
-
-    // Per-view backend choice — same Snapshot/RTSP toggle as Live Video.
-    // Independent state from the other views so each tab remembers its
-    // own preference for the current session.
-    let preview_mode = use_signal(LiveVideoMode::default);
-    let preview_backend_id = use_memo(move || preview_mode.read().backend_id());
 
     // Feature-detect PTZ on this camera. Just a capabilities probe —
     // the underlying `OnvifSession` caches the GetCapabilities response,
@@ -414,48 +694,15 @@ pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Ele
         });
     });
 
-    // ── Render ─────────────────────────────────────────────────────────────
-    // Preview height is user-adjustable via the splitter under it. The drag is
-    // tracked on the whole view so the pointer may leave the thin handle.
-    let mut preview_h = use_signal(|| PREVIEW_DEFAULT_H);
-    let mut split_drag: Signal<Option<(f64, f64)>> = use_signal(|| None); // (start_y, start_h)
-    let preview_style = format!("flex-basis: {}px", *preview_h.read());
-    let splitting = split_drag.read().is_some();
-
     rsx! {
-        div {
-            class: if splitting { "ptz-view ptz-view--splitting" } else { "ptz-view" },
-            onpointermove: move |e: Event<PointerData>| {
-                if let Some((y0, h0)) = *split_drag.peek() {
-                    let dy = e.data().client_coordinates().y - y0;
-                    preview_h.set((h0 + dy).clamp(PREVIEW_MIN_H, PREVIEW_MAX_H));
-                }
-            },
-            onpointerup: move |_| split_drag.set(None),
-            onpointerleave: move |_| split_drag.set(None),
+        div { class: "ptz-view",
             div { class: "content-header",
                 Icon { name: "crosshair", size: 20 }
                 span { class: "content-title", {i18n::t(locale, "nav_ptz")} }
-                LiveModeTabs { mode: preview_mode }
                 if let Some(Err(e)) = &*ptz_state.read_unchecked() {
                     span { class: "ptz-status-error", " · {e}" }
                 }
             }
-            div { class: "imaging-preview ptz-preview", style: "{preview_style}",
-                LiveVideoStage {
-                    addr,
-                    creds,
-                    backend_id: Some(preview_backend_id.into()),
-                }
-            }
-            div {
-                class: "ptz-splitter",
-                onpointerdown: move |e: Event<PointerData>| {
-                    e.prevent_default();
-                    split_drag.set(Some((e.data().client_coordinates().y, *preview_h.peek())));
-                },
-            }
-
             div { class: "ptz-body",
                 // ── Left: joystick + zoom + speed + home/stop ──
                 div { class: "ptz-controls",
@@ -483,6 +730,14 @@ pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Ele
                             span { class: "ptz-side-label", {i18n::t(locale, "ptz_zoom")} }
                             ZoomButton { dir:  1.0, icon: "plus",  do_move: do_move, do_stop: do_stop, speed }
                             ZoomButton { dir: -1.0, icon: "minus", do_move: do_move, do_stop: do_stop, speed }
+                        }
+                        div { class: "ptz-misc",
+                            button {
+                                class: "btn btn-sm",
+                                onclick: move |_| goto_home.call(()),
+                                Icon { name: "home", size: 14 }
+                                {i18n::t(locale, "ptz_home")}
+                            }
                         }
                         div { class: "ptz-focus",
                             span { class: "ptz-side-label", {i18n::t(locale, "ptz_focus")} }
@@ -597,15 +852,6 @@ pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Ele
                                     onclick: move |_| go_absolute.call(()),
                                     {i18n::t(locale, "ptz_absolute_go")}
                                 }
-                            }
-                        }
-                        div { class: "ptz-misc",
-                            button {
-                                class: "btn btn-md",
-                                onclick: move |_| goto_home.call(()),
-                                Icon { name: "home", size: 14 }
-                                " "
-                                {i18n::t(locale, "ptz_home")}
                             }
                         }
                     }
