@@ -29,6 +29,21 @@ depends = [
     "libxdo3",
 ]
 
+# dx does NOT merge this into its generated Info.plist — it replaces it — so the
+# file carries every standard key (icon, executable, identifier, version) plus
+# NSLocalNetworkUsageDescription, without which macOS 15+ may never show the
+# Local Network prompt and every LAN connection silently fails. Bump the
+# version strings in it alongside Cargo.toml.
+[bundle.macos]
+info_plist_path = "assets/macos/Info.plist"
+# Ad-hoc sign the whole .app so the main binary's signing identifier is the
+# stable CFBundleIdentifier rather than the linker's per-build `oxdm-<hash>`.
+# macOS 15+ keys the Local Network permission on that identifier; with a
+# hash that changes every build the grant never sticks and the prompt often
+# never appears. No hardened runtime: it adds nothing without a real cert.
+signing_identity = "-"
+hardened_runtime = false
+
 [web.app]
 title = "OxDM"
 

@@ -2,9 +2,10 @@
 //!
 //! - `~/.oxdm/config.toml`: theme, locale (no credentials)
 //! - `~/.oxdm/devices.toml`: manually added devices (per-device creds in keychain)
+//! - `~/.oxdm/session.toml`: last selected device / profile / view, restored on launch
 //! - System keychain: global credentials + per-device credential overrides
 
-use crate::state::{Credentials, DeviceEntry, HealthGroup, Locale, Theme};
+use crate::state::{Credentials, DeviceEntry, HealthGroup, Locale, SettingsTab, Theme, View};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -86,6 +87,99 @@ fn ensure_dir() {
         if !dir.exists() {
             let _ = std::fs::create_dir_all(&dir);
         }
+    }
+}
+
+// ── Hidden profiles ─────────────────────────────────────────────────────────
+//
+// Cameras refuse DeleteProfile on `fixed` profiles, so "deleting" one only
+// hides it in oxdm. Keys are `"<device addr>|<profile token>"`.
+
+fn hidden_profiles_path() -> Option<PathBuf> {
+    oxdm_dir().map(|d| d.join("hidden_profiles.toml"))
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct HiddenProfilesFile {
+    #[serde(default)]
+    hidden: Vec<String>,
+}
+
+pub fn hidden_profile_key(addr: &str, token: &str) -> String {
+    format!("{addr}|{token}")
+}
+
+pub fn load_hidden_profiles() -> std::collections::HashSet<String> {
+    hidden_profiles_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str::<HiddenProfilesFile>(&s).ok())
+        .map(|f| f.hidden.into_iter().collect())
+        .unwrap_or_default()
+}
+
+pub fn set_profile_hidden(addr: &str, token: &str, hidden: bool) {
+    let key = hidden_profile_key(addr, token);
+    let mut set = load_hidden_profiles();
+    if hidden {
+        set.insert(key);
+    } else {
+        set.remove(&key);
+    }
+    ensure_dir();
+    let Some(path) = hidden_profiles_path() else {
+        return;
+    };
+    let mut list: Vec<String> = set.into_iter().collect();
+    list.sort();
+    match toml::to_string_pretty(&HiddenProfilesFile { hidden: list }) {
+        Ok(content) => {
+            if let Err(e) = std::fs::write(&path, content) {
+                warn!(error = %e, "Failed to save hidden profiles");
+            }
+        }
+        Err(e) => warn!(error = %e, "Failed to serialize hidden profiles"),
+    }
+}
+
+// ── Last session ────────────────────────────────────────────────────────────
+
+fn session_path() -> Option<PathBuf> {
+    oxdm_dir().map(|d| d.join("session.toml"))
+}
+
+/// What was on screen when the app last ran. Device is keyed by `addr`;
+/// empty strings mean "nothing" so an old file with fewer fields still parses.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionFile {
+    #[serde(default)]
+    pub device_addr: String,
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub view: String,
+    #[serde(default)]
+    pub settings_tab: String,
+}
+
+pub fn load_session() -> SessionFile {
+    session_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_session(session: &SessionFile) {
+    ensure_dir();
+    let Some(path) = session_path() else {
+        return;
+    };
+    match toml::to_string_pretty(session) {
+        Ok(content) => {
+            if let Err(e) = std::fs::write(&path, content) {
+                warn!(error = %e, "Failed to save session");
+            }
+        }
+        Err(e) => warn!(error = %e, "Failed to serialize session"),
     }
 }
 
@@ -858,6 +952,60 @@ fn locale_to_str(l: Locale) -> &'static str {
         Locale::En => "en",
         Locale::ZhTw => "zh_tw",
         Locale::Ru => "ru",
+    }
+}
+
+pub fn view_to_str(v: View) -> &'static str {
+    match v {
+        View::Welcome => "welcome",
+        View::DeviceSettings => "device_settings",
+        View::LiveVideo => "live_video",
+        View::ImagingSettings => "imaging",
+        View::PtzControl => "ptz",
+        View::Events => "events",
+        View::Osd => "osd",
+        View::IoControl => "io_control",
+        View::Recordings => "recordings",
+        View::HealthOverview => "health_overview",
+    }
+}
+
+pub fn view_from_str(s: &str) -> View {
+    match s {
+        "device_settings" => View::DeviceSettings,
+        "live_video" => View::LiveVideo,
+        "imaging" => View::ImagingSettings,
+        "ptz" => View::PtzControl,
+        "events" => View::Events,
+        "osd" => View::Osd,
+        "io_control" => View::IoControl,
+        "recordings" => View::Recordings,
+        "health_overview" => View::HealthOverview,
+        _ => View::Welcome,
+    }
+}
+
+pub fn settings_tab_to_str(t: SettingsTab) -> &'static str {
+    match t {
+        SettingsTab::Identification => "identification",
+        SettingsTab::Network => "network",
+        SettingsTab::Time => "time",
+        SettingsTab::Users => "users",
+        SettingsTab::Maintenance => "maintenance",
+        SettingsTab::Health => "health",
+        SettingsTab::Quirks => "quirks",
+    }
+}
+
+pub fn settings_tab_from_str(s: &str) -> SettingsTab {
+    match s {
+        "network" => SettingsTab::Network,
+        "time" => SettingsTab::Time,
+        "users" => SettingsTab::Users,
+        "maintenance" => SettingsTab::Maintenance,
+        "health" => SettingsTab::Health,
+        "quirks" => SettingsTab::Quirks,
+        _ => SettingsTab::Identification,
     }
 }
 

@@ -15,6 +15,10 @@ app downloaded from the internet. To run it:
    xattr -dr com.apple.quarantine /Applications/oxdm.app
    ```
 3. Launch oxdm normally.
+4. On macOS 15 or newer, approve the **Local Network** prompt on first launch.
+   If it was dismissed, or cameras stay unreachable while `curl` from Terminal
+   works, enable oxdm under **System Settings → Privacy & Security → Local
+   Network**. Because the bundle is unsigned, a rebuilt app may re-prompt.
 
 Apple Silicon (`aarch64`) only — no Intel build. On Intel, build from source.
 

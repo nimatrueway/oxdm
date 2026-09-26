@@ -156,47 +156,6 @@ a      { color: var(--blue); text-decoration: none; }
   color: var(--overlay1);
 }
 
-/* Sidebar tab bar (Discovered / Manual) */
-.sidebar-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--surface0);
-  flex-shrink: 0;
-}
-.sidebar-tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 7px 0;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--overlay1);
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
-}
-.sidebar-tab:hover { color: var(--text); }
-.sidebar-tab--active {
-  color: var(--blue);
-  border-bottom-color: var(--blue);
-  font-weight: 600;
-}
-.sidebar-tab-badge {
-  font-size: 10px;
-  min-width: 16px;
-  height: 16px;
-  line-height: 16px;
-  text-align: center;
-  border-radius: 8px;
-  background: var(--surface1);
-  color: var(--subtext0);
-  padding: 0 4px;
-}
-.sidebar-tab--active .sidebar-tab-badge {
-  background: var(--blue);
-  color: var(--base);
-}
-
 /* Credential indicator in sidebar header */
 .cred-indicator {
   display: flex;
@@ -597,6 +556,27 @@ a      { color: var(--blue); text-decoration: none; }
   display: flex;
   gap: 2px;
   flex-shrink: 0;
+}
+
+.thumb-hidden-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding: 2px 4px;
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: var(--overlay1);
+  cursor: pointer;
+}
+.thumb-hidden-toggle:hover { color: var(--text); }
+.thumb-hidden-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 6px;
+  opacity: 0.7;
 }
 
 .thumb-action {
@@ -1005,8 +985,6 @@ a      { color: var(--blue); text-decoration: none; }
 .theme-classic .thumb-card { border: 1px solid var(--surface1); }
 
 /* Sidebar tabs */
-.theme-classic .sidebar-tabs { background: var(--base); }
-.theme-classic .sidebar-tab--active { background: var(--mantle); }
 
 /* ── Toast Notifications ─────────────────────────────────────────────────── */
 .toast-container {
@@ -1119,6 +1097,18 @@ a      { color: var(--blue); text-decoration: none; }
   font-size: 12px;
   color: var(--overlay1);
   line-height: 1.5;
+}
+
+/* Startup overlay while the keychain prompt is pending */
+.keychain-wait-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.keychain-wait-row .status-bar-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }
 
 .dialog-footer {
@@ -1453,9 +1443,46 @@ a      { color: var(--blue); text-decoration: none; }
   display: flex;
   gap: 16px;
   padding: 16px;
-  overflow: hidden;
-  min-height: 0;
+  overflow-y: auto;
+  min-height: 160px;
 }
+.ptz-body::-webkit-scrollbar { width: 10px; }
+.ptz-body::-webkit-scrollbar-thumb {
+  background: var(--surface1);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-height: 30px;
+}
+
+/* Preview height is set inline (flex-basis) and dragged via .ptz-splitter;
+   shrink is allowed so a tall preview yields to .ptz-body's min-height. */
+.ptz-preview {
+  flex: 0 1 auto;
+  min-height: 120px;
+  border-bottom: none;
+}
+.ptz-splitter {
+  flex: 0 0 6px;
+  cursor: row-resize;
+  background: var(--surface0);
+  position: relative;
+}
+.ptz-splitter::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 40px;
+  height: 2px;
+  margin-left: -20px;
+  border-radius: 1px;
+  background: var(--surface2);
+}
+.ptz-splitter:hover,
+.ptz-view--splitting .ptz-splitter { background: var(--surface1); }
+.ptz-view--splitting,
+.ptz-view--splitting * { cursor: row-resize !important; user-select: none; }
 
 /* Joystick + zoom + speed live in the left column. */
 .ptz-controls {
@@ -1820,6 +1847,67 @@ a      { color: var(--blue); text-decoration: none; }
 .live-video-save:disabled:hover {
   background: none;
   color: var(--overlay1);
+}
+.live-video-record {
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.live-video-record:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.live-video-record:disabled:hover {
+  background: none;
+  color: var(--overlay1);
+}
+.live-video-record--on {
+  color: var(--red);
+}
+.live-video-pip {
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.live-video-pip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* PiP window: the whole page is the video */
+.pip-root {
+  position: fixed;
+  inset: 0;
+  background: #000;
+}
+.pip-root .live-video-frame--stream oxdm-stream,
+.pip-root .live-video-frame { width: 100%; height: 100%; }
+.pip-root { cursor: grab; }
+.pip-root:active { cursor: grabbing; }
+.pip-root .oxdm-live-bar { cursor: default; }
+.pip-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+.pip-root:hover .pip-close { opacity: 1; }
+.pip-close:hover { background: rgba(0,0,0,0.8); }
+.live-video-rec-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--red);
 }
 
 /* ── Log viewer ──────────────────────────────────────────────────────────── */
@@ -2424,6 +2512,61 @@ a      { color: var(--blue); text-decoration: none; }
 }
 iframe.live-video-frame {
   background: #000;
+}
+/* <oxdm-stream> (assets/js) paints to a <canvas> (or an <img> on the MJPEG
+   fallback); both fill the frame while keeping the aspect ratio */
+.live-video-frame--stream oxdm-stream {
+  display: block;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.oxdm-stream-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.oxdm-stream--live .oxdm-live-badge { background: var(--red); }
+/* Live control bar replacing the native seekable controls */
+.oxdm-live-bar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0));
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+.live-video-frame--stream oxdm-stream:hover .oxdm-live-bar,
+.oxdm-stream--paused .oxdm-live-bar { opacity: 1; }
+.oxdm-live-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 6px;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
+}
+.oxdm-live-bar button:hover { background: rgba(0,0,0,0.75); }
+.oxdm-live-bar button:disabled { opacity: 0.4; cursor: default; }
+.oxdm-live-bar button:last-child { margin-left: auto; }
+.oxdm-live-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: #fff;
+  background: var(--surface2);
+  border-radius: 4px;
+  padding: 2px 6px;
 }
 .live-video-placeholder {
   display: flex;

@@ -50,6 +50,18 @@ time = { version = "0.3", features = ["local-offset"] }
 # wants raw RGBA, and we keep the master `assets/icons/icon.png` as the
 # only source of truth so `dx` can also use it for bundling.
 png = "0.18"
+retina = "0.4.20"
+tokio-tungstenite = "0.30.0"
+jpeg-encoder = "0.7.1"
+openh264 = { version = "0.9.8", features = ["source"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["aac"] }
+bytes = "1.12.1"
+url = "2.5.8"
+futures = "0.3.34"
+
+# PiP window: NSWindow.contentAspectRatio, which tao does not expose.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
 
 [build-dependencies]
 # Build-time only — used by build.rs on Windows to (1) generate a multi-
@@ -66,6 +78,15 @@ winresource = "0.1"
 # needing a camera. (metamorph-server is already on for the release binary
 # above; listed here too for clarity.)
 oxvif = { version = "0.16", features = ["mock-server", "health", "metamorph-server"] }
+
+# retina 0.4.20 with one change (see patches/retina-*.patch): prefer
+# GET_PARAMETER over SET_PARAMETER for keepalives. TP-Link Tapo advertises
+# SET_PARAMETER but answers it with 400 + a stale CSeq, which made upstream
+# retina abort the session every timeout/2 (~7 s picture freeze). vendor/retina
+# is git-ignored; run scripts/vendor-retina.sh once after cloning to create it.
+# Drop once upstream ships scottlamb/retina#134 or a keepalive-method option.
+[patch.crates-io]
+retina = { path = "vendor/retina" }
 
 [profile.wasm-dev]
 inherits = "dev"

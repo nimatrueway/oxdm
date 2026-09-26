@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 use crate::components::Icon;
 use crate::state::{Credentials, Ctx, ToastLevel};
-use crate::views::live_video::{LiveH265Tip, LiveModeTabs, LiveVideoMode, LiveVideoStage};
+use crate::views::live_video::{LiveModeTabs, LiveVideoMode, LiveVideoStage};
 use crate::views::video_encoder::VideoEncoderSection;
 use crate::{api, i18n};
 use dioxus::prelude::*;
@@ -53,7 +53,7 @@ pub fn ImagingView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elemen
     // Per-view backend choice — same Snapshot/RTSP toggle as Live Video,
     // independent state so a user who's running RTSP in Imaging can
     // still keep PTZ on Snapshot, etc.
-    let preview_mode = use_signal(|| LiveVideoMode::Snapshot);
+    let preview_mode = use_signal(LiveVideoMode::default);
     let preview_backend_id = use_memo(move || preview_mode.read().backend_id());
 
     rsx! {
@@ -63,7 +63,6 @@ pub fn ImagingView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Elemen
                 span { class: "content-title", {i18n::t(locale, "nav_imaging")} }
                 LiveModeTabs { mode: preview_mode }
             }
-            LiveH265Tip { mode: preview_mode }
             // Live preview at the top so adjustments are visible without
             // jumping back to the LiveVideo view. Reuses the same backend
             // pipeline; the snapshot loop refreshes ~5 fps, so the user sees

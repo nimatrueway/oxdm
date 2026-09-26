@@ -142,24 +142,33 @@ src/
                     `invalidate_all()` to drop stale entries.
   persist.rs        ~/.oxdm/config.toml (theme/locale/log/tls),
                     ~/.oxdm/devices.toml (manual devices),
+                    ~/.oxdm/session.toml (last device/profile/view/tab,
+                    restored on launch once the device is in the list),
                     + single JSON blob in system keychain for ALL
                     credentials (one keychain prompt, not N)
   device_ops.rs     Background firmware fetch + auth re-verification
   util.rs           extract_ip, urldecode, copy_to_clipboard
 
   video/                   Live-video backends behind the VideoBackend trait
-    mod.rs                 Trait + global registry (MJPEG default + go2rtc);
-                           VideoSource / EmbedKind
+    mod.rs                 Trait + global registry (native RTSP default +
+                           MJPEG fallback); VideoSource / EmbedKind; loopback server
+                           port shared by both backends
     mjpeg.rs               Pure-Rust 127.0.0.1 HTTP server: polls
                            GetSnapshotUri per stream, pushes JPEG frames as
-                           multipart/x-mixed-replace. Always-on default.
-    go2rtc.rs              Spawns the go2rtc helper binary for RTSP-grade
-                           playback (H.265 transcode). Optional + lazy.
+                           multipart/x-mixed-replace. Always-on fallback
+                           ("Snapshot" tab). Also
+                           routes /ws/{id} and /mjpeg/{id} to rtsp.rs.
+    rtsp.rs                In-process RTSP pipeline: retina (vendored, see
+                           `[patch.crates-io]`) pulls H.264/H.265 + audio,
+                           fans frames out over a WebSocket to
+                           assets/js/oxdm-stream.js (WebCodecs + canvas +
+                           PCM audio), or decodes via OpenH264 into an
+                           MJPEG fallback. No external binaries.
 
   components/
     mod.rs
     topbar.rs              Theme + locale toggle + help (opens About)
-    device_list.rs         Left sidebar: tabs (Discovered / Manual),
+    device_list.rs         Left sidebar: single merged device list,
                            search, scan/add buttons, DeviceCard + context
                            menu; owns the multi-round discovery scan loop
     device_panel.rs        Middle pane: selected-device nav + NVT
@@ -424,3 +433,15 @@ service-URL fields on `Capabilities` are the usual breakage points.
 - Snapshot URIs returned by some cameras are relative or schemeless;
   `device_panel.rs::ProfileThumbnails` resolves them against the device
   base URL before fetching.
+- TP-Link Tapo (ONVIF on port 2020): `GetCapabilities` advertises DeviceIO
+  with an *empty* `XAddr`, which oxvif keeps as `Some("")` and therefore never
+  fills from `GetServices`. `api::get_digital_inputs` resolves the URL via
+  `GetServices` itself in that case — a POST to `""` otherwise surfaces as a
+  misleading "HTTP 401: Request body must not be a stream". The same camera
+  answers `GetRelayOutputs` (0 relays) and `GetSnapshotUri` with a bare
+  `SOAP-ENV:Receiver` fault carrying no reason; `is_action_unsupported`
+  treats the reason-less form as "no IO hardware", and the MJPEG backend
+  falls back to the native RTSP pipeline's MJPEG transcode for the missing
+  snapshot URI. Its RTSP server also advertises `SET_PARAMETER` but answers a
+  bodyless one with `400` carrying a stale CSeq — the vendored retina in
+  `vendor/retina` prefers `GET_PARAMETER` for keepalives for this reason.

@@ -360,6 +360,12 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 }
 
+/// Inverse of [`decode_jpeg_data_uri`].
+pub fn jpeg_data_uri(bytes: &[u8]) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    format!("data:image/jpeg;base64,{}", STANDARD.encode(bytes))
+}
+
 /// Decode a `data:image/jpeg;base64,...` URI into raw JPEG bytes.
 /// Returns `None` if the URI doesn't have the expected prefix or the
 /// base64 payload doesn't decode.

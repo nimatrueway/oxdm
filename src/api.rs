@@ -1617,6 +1617,11 @@ pub(crate) fn is_action_unsupported(err: &str) -> bool {
         // "missing required field", so a genuine parse failure elsewhere is
         // still surfaced as an error.
         || lower.contains("missing required field: deviceio service url")
+        // TP-Link Tapo answers the optional IO actions with a bare Receiver
+        // fault and no reason text at all (its capabilities say 0 relays).
+        // Only the reason-less form is matched; a Receiver fault that names a
+        // cause still surfaces as an error.
+        || lower.trim_end().ends_with("[soap-env:receiver]:")
 }
 
 fn map_io_unsupported<T>(err: ApiError) -> Result<T, ApiError> {
@@ -1676,7 +1681,20 @@ pub async fn get_digital_inputs(
     creds: &Credentials,
 ) -> Result<Vec<DigitalInput>, ApiError> {
     let s = session_for(addr, creds).await?;
-    trace_result("GetDigitalInputs", addr, s.get_digital_inputs().await).or_else(map_io_unsupported)
+    // TP-Link Tapo advertises DeviceIO in GetCapabilities with an *empty*
+    // XAddr. oxvif keeps that as `Some("")`, skips its GetServices fill-in,
+    // and a POST to "" dies inside reqwest — surfacing as a baffling
+    // "HTTP 401: Request body must not be a stream". Resolve it ourselves.
+    let result = if s.capabilities().device_io.url.as_deref() == Some("") {
+        let services = trace_result("GetServices", addr, s.get_services().await)?;
+        let Some(svc) = services.into_iter().find(|svc| svc.is_device_io()) else {
+            return Err(IO_UNSUPPORTED_SENTINEL.to_string());
+        };
+        s.client().get_digital_inputs(&svc.url).await
+    } else {
+        s.get_digital_inputs().await
+    };
+    trace_result("GetDigitalInputs", addr, result).or_else(map_io_unsupported)
 }
 
 // ── Users ───────────────────────────────────────────────────────────────────

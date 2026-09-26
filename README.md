@@ -101,8 +101,10 @@ The equivalent Fedora packages are `webkit2gtk4.1-devel`, `gtk3-devel`,
   I/O errors are shown separately from a successful scan finding no devices;
   some upstream send/receive failures are still not reported. Rediscovery keeps
   a known device's address while the device continues to advertise it.
-- **Live video** — always-on MJPEG snapshot stream, or RTSP (H.264/H.265) via a
-  bundled go2rtc bridge with H.265 → H.264 transcode and MSE fallback.
+- **Live video** — always-on MJPEG snapshot stream, or RTSP (H.264/H.265 +
+  audio) decoded in-process: a pure-Rust RTSP client feeds the WebView's
+  WebCodecs decoder, with an OpenH264 → MJPEG fallback where WebCodecs is
+  unavailable. No sidecar binaries or ffmpeg required.
 - **Snapshots** — save a JPEG from any profile thumbnail or the Live Video view.
 - **Device settings** — identification and scopes; network (hostname, IPv4 and
   IPv6 manual interfaces, MTU, DNS, NTP, gateway, protocols); system time (with
@@ -292,9 +294,6 @@ Verbose logging:
 ```sh
 RUST_LOG=oxdm=debug dx serve --platform desktop
 ```
-
-RTSP mode additionally requires `ffmpeg` on `PATH` for H.265 transcoding;
-snapshot (MJPEG) mode needs nothing extra.
 
 ## License
 

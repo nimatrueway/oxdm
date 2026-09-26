@@ -40,6 +40,15 @@ fn io_unsupported_covers_the_fault_texts_and_a_missing_deviceio_endpoint() {
         "Missing required field: DeviceIO service URL"
     ));
 
+    // TP-Link Tapo: a Receiver fault with no reason at all, on a camera whose
+    // capabilities declare zero relays.
+    assert!(is_action_unsupported("SOAP fault [SOAP-ENV:Receiver]: "));
+    assert!(is_action_unsupported("SOAP fault [SOAP-ENV:Receiver]:"));
+    // …but a Receiver fault that gives a cause is still an error.
+    assert!(!is_action_unsupported(
+        "SOAP fault [SOAP-ENV:Receiver]: Device busy"
+    ));
+
     // A different missing field is a real parse failure and must stay one —
     // the whole field name is matched, not the "missing required field" prefix.
     assert!(!is_action_unsupported("Missing required field: Token"));

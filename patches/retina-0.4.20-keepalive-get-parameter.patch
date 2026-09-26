@@ -1,0 +1,43 @@
+retina 0.4.20: prefer GET_PARAMETER over SET_PARAMETER for RTSP keepalives
+
+TP-Link Tapo cameras (C220 and others) advertise SET_PARAMETER in the OPTIONS
+`Public:` header but answer a bodyless SET_PARAMETER keepalive with
+`400 Bad Request` echoing the *previous* CSeq. retina's `handle_response`
+cannot match that to the pending keepalive, bails with `RtspFramingError`,
+and the session is torn down every `timeout/2` (~7.5 s) -> visible freeze.
+
+Upstream tracking (all open as of 2026-09-25):
+  https://github.com/scottlamb/retina/issues/136  same bug, Tapo C220
+  https://github.com/scottlamb/retina/issues/133  same bug, "C520WS" cam
+  https://github.com/scottlamb/retina/pull/134    tolerate rejected keepalive
+                                                  + fall back to OPTIONS
+
+Drop this patch once a retina release includes #134 (or equivalent) or
+exposes a keepalive-method option on SessionOptions.
+
+--- a/src/client/mod.rs
++++ b/src/client/mod.rs
+@@ -2158,10 +2158,20 @@
+         // <https://github.com/aler9/rtsp-simple-server/issues/1066>. Initially
+         // send `OPTIONS`, then follow recommendations to use (bodyless)
+         // `SET_PARAMETER` or `GET_PARAMETER` if available.
+-        let method = if *inner.flags & (SessionFlag::SetParameterSupported as u8) != 0 {
+-            KeepaliveMethod::SetParameter
+-        } else if *inner.flags & (SessionFlag::GetParameterSupported as u8) != 0 {
++        //
++        // OXDM PATCH: prefer `GET_PARAMETER`. TP-Link Tapo cameras advertise
++        // `SET_PARAMETER` in `Public:` but answer a bodyless one with
++        // `400 Bad Request` carrying the *previous* CSeq, which
++        // `handle_response` cannot match and so aborts the session every
++        // `timeout/2`. `GET_PARAMETER` is what ffmpeg/GStreamer/VLC send and
++        // is honoured everywhere we have seen `SET_PARAMETER` refused.
++        // Upstream: scottlamb/retina#136, #133, PR #134 (unmerged). Remove
++        // once a release tolerates rejected keepalives or makes the method
++        // configurable.
++        let method = if *inner.flags & (SessionFlag::GetParameterSupported as u8) != 0 {
+             KeepaliveMethod::GetParameter
++        } else if *inner.flags & (SessionFlag::SetParameterSupported as u8) != 0 {
++            KeepaliveMethod::SetParameter
+         } else {
+             KeepaliveMethod::Options
+         };

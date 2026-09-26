@@ -16,12 +16,15 @@ mod video;
 mod views;
 
 use components::{ConfirmDialogModal, DeviceList, DevicePanel, ToastContainer, Topbar};
-use state::{Ctx, GlobalKey, SettingsTab, View};
+use state::{Credentials, Ctx, GlobalKey, SettingsTab, View};
 use views::MainContent;
 
 /// CSS is embedded directly in the binary so the release ships as a
 /// single executable — no sibling `assets/` directory needed at runtime.
-const MAIN_CSS: &str = include_str!("../assets/main.css");
+pub(crate) const MAIN_CSS: &str = include_str!("../assets/main.css");
+/// `<oxdm-stream>` — the WebCodecs player element for the native RTSP
+/// backend. See video/rtsp.rs for the wire format it consumes.
+pub(crate) const STREAM_JS: &str = include_str!("../assets/js/oxdm-stream.js");
 
 /// App icon — same master PNG `build.rs` uses to mint the embedded ICO,
 /// re-decoded here at startup so `WindowBuilder::with_window_icon` has
@@ -33,7 +36,7 @@ const ICON_PNG: &[u8] = include_bytes!("../assets/icons/icon.png");
 /// Decode the embedded PNG into a `tao::window::Icon`. Returns `None` if
 /// the PNG is in an unexpected colour format — the rest of the app keeps
 /// working with the default icon.
-fn load_window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
+pub(crate) fn load_window_icon() -> Option<dioxus::desktop::tao::window::Icon> {
     let decoder = png::Decoder::new(std::io::Cursor::new(ICON_PNG));
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()?];
@@ -119,46 +122,37 @@ fn main() {
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(
-            dioxus::desktop::Config::new()
-                .with_window(
-                    dioxus::desktop::WindowBuilder::new()
-                        .with_title("OxDM")
-                        .with_window_icon(load_window_icon())
-                        // 1280 was ~40px short of fitting the settings tab bar:
-                        // the two sidebars take 500, the seven tabs
-                        // (Identification…Health, Quirks) need ~750, and Quirks
-                        // fell off the right edge with nothing to scroll it back.
-                        .with_inner_size(dioxus::desktop::LogicalSize::new(1440.0, 800.0))
-                        .with_min_inner_size(dioxus::desktop::LogicalSize::new(900.0, 500.0)),
-                )
-                .with_disable_context_menu(true)
-                .with_menu(None),
+            dioxus::desktop::Config::new().with_window(
+                dioxus::desktop::WindowBuilder::new()
+                    .with_title("OxDM")
+                    .with_window_icon(load_window_icon())
+                    // 1280 was ~40px short of fitting the settings tab bar:
+                    // the two sidebars take 500, the seven tabs
+                    // (Identification…Health, Quirks) need ~750, and Quirks
+                    // fell off the right edge with nothing to scroll it back.
+                    .with_inner_size(dioxus::desktop::LogicalSize::new(1440.0, 800.0))
+                    .with_min_inner_size(dioxus::desktop::LogicalSize::new(900.0, 500.0)),
+            ),
         )
         .launch(App);
 }
 
 fn App() -> Element {
-    // Load persisted settings (single keychain read for all credentials)
     let cfg = use_hook(persist::load_config);
-    let (global_creds, creds_map) = use_hook(|| persist::load_all_credentials(&cfg));
-    let saved_devices = use_hook(|| persist::load_devices(&creds_map));
-    let saved_groups = use_hook(|| persist::load_health_groups(&creds_map));
 
-    // Install both video backends. MJPEG is the always-on default;
-    // go2rtc is optional and lazy — its `new()` only locates the binary,
-    // the subprocess spawns on first stream. Both run inside the dioxus
-    // tokio runtime so spawning is safe here. Failure to bind MJPEG only
+    // Install both video backends. MJPEG binds the shared loopback server
+    // and is the always-on fallback; the native RTSP backend (the default
+    // live mode) serves through the same listener. Both run inside the
+    // dioxus tokio runtime so spawning is safe here. Failure to bind only
     // logs; the rest of the app keeps working without live video.
     use_hook(|| match video::mjpeg::MjpegBackend::start() {
         Ok(b) => video::install_mjpeg(std::sync::Arc::new(b)),
         Err(e) => tracing::error!(error = %e, "failed to start MJPEG backend"),
     });
-    use_hook(|| {
-        video::install_go2rtc(std::sync::Arc::new(video::go2rtc::Go2rtcBackend::new()));
-    });
+    use_hook(|| video::install_rtsp(std::sync::Arc::new(video::rtsp::RtspBackend)));
 
     let ctx = Ctx {
-        devices: use_signal(|| saved_devices),
+        devices: use_signal(Vec::new),
         selected: use_signal(|| None),
         view: use_signal(|| View::Welcome),
         settings_tab: use_signal(|| SettingsTab::Identification),
@@ -168,8 +162,8 @@ fn App() -> Element {
         toasts: use_signal(Vec::new),
         next_toast_id: use_signal(|| 0),
         dialog: use_signal(|| None),
-        global_credentials: use_signal(|| global_creds),
-        health_groups: use_signal(|| saved_groups),
+        global_credentials: use_signal(Credentials::default),
+        health_groups: use_signal(Vec::new),
         health_list: use_signal(|| crate::state::HealthListSel::AllDevices),
         dragging: use_signal(Vec::new),
         drag_pending: use_signal(|| None),
@@ -178,11 +172,37 @@ fn App() -> Element {
         keyboard_action: use_signal(|| None),
         log_to_file: use_signal(|| cfg.log_to_file),
         tls_strict: use_signal(|| cfg.tls_strict),
+        loaded: use_signal(|| false),
     };
     // Seed the TLS-strict atomic from config so the first snapshot fetch
     // after launch already honours the saved preference.
     api::set_tls_strict(cfg.tls_strict);
     use_context_provider(|| ctx);
+
+    // One keychain read for every credential. On macOS it blocks until the
+    // user answers the access prompt, so it must not run inside render —
+    // the window would stay blank until then.
+    use_future(move || {
+        let cfg = cfg.clone();
+        async move {
+            let result = tokio::task::spawn_blocking(move || {
+                let (creds, map) = persist::load_all_credentials(&cfg);
+                let devices = persist::load_devices(&map);
+                let groups = persist::load_health_groups(&map);
+                (creds, devices, groups)
+            })
+            .await;
+            match result {
+                Ok((creds, devices, groups)) => {
+                    ctx.global_credentials.clone().set(creds);
+                    ctx.devices.clone().set(devices);
+                    ctx.health_groups.clone().set(groups);
+                }
+                Err(e) => tracing::error!(error = %e, "persisted-state load task failed"),
+            }
+            ctx.loaded.clone().set(true);
+        }
+    });
 
     // Auto-save when theme / locale / log / tls preference change.
     // Also pushes tls_strict into the api atomic so a toggle takes effect
@@ -211,15 +231,86 @@ fn App() -> Element {
     // `api::pick_channel`). Neither is visible in the UI. Only `ctx.selected`
     // is subscribed: the thumbnail cards set `selected_profile` without
     // touching it, so a profile click does not clear itself.
+    //
+    // Session restore hands its profile over through `restore_profile`, so the
+    // clear that follows its device selection installs it instead of wiping it.
+    let mut restore_profile: Signal<Option<String>> = use_signal(|| None);
     use_effect(move || {
         let _device_changed = *ctx.selected.read();
-        ctx.selected_profile.clone().set(None);
+        ctx.selected_profile.clone().set(restore_profile.take());
+    });
+
+    // Restore the last session once its device is in the list. Manual devices
+    // arrive from disk; discovered ones only after a scan, so this waits on
+    // `devices` rather than running once. Dropped as soon as the user picks a
+    // device themselves.
+    let mut pending_session: Signal<Option<persist::SessionFile>> =
+        use_signal(|| Some(persist::load_session()));
+    use_effect(move || {
+        let devices = ctx.devices.read();
+        let Some(session) = pending_session.peek().clone() else {
+            return;
+        };
+        if ctx.selected.peek().is_some() {
+            pending_session.set(None);
+            return;
+        }
+        let view = persist::view_from_str(&session.view);
+        if session.device_addr.is_empty() {
+            pending_session.set(None);
+            if view == View::HealthOverview {
+                ctx.view.clone().set(view);
+            }
+            return;
+        }
+        let Some(idx) = devices.iter().position(|d| d.addr == session.device_addr) else {
+            return;
+        };
+        pending_session.set(None);
+        restore_profile.set(Some(session.profile).filter(|p| !p.is_empty()));
+        ctx.settings_tab
+            .clone()
+            .set(persist::settings_tab_from_str(&session.settings_tab));
+        ctx.view.clone().set(view);
+        ctx.selected.clone().set(Some(idx));
+    });
+
+    use_effect(move || {
+        let selected = *ctx.selected.read();
+        let view = *ctx.view.read();
+        let tab = *ctx.settings_tab.read();
+        let profile = ctx.selected_profile.read().clone();
+        if !*ctx.loaded.read() {
+            return;
+        }
+        // A pending restore must not be overwritten by the launch defaults,
+        // but a user selection made before it resolves wins over it.
+        if pending_session.peek().is_some() {
+            if selected.is_none() {
+                return;
+            }
+            pending_session.set(None);
+        }
+        let devices = ctx.devices.peek();
+        let device_addr = selected
+            .and_then(|i| devices.get(i))
+            .map(|d| d.addr.clone())
+            .unwrap_or_default();
+        persist::save_session(&persist::SessionFile {
+            device_addr,
+            profile: profile.unwrap_or_default(),
+            view: persist::view_to_str(view).to_string(),
+            settings_tab: persist::settings_tab_to_str(tab).to_string(),
+        });
     });
 
     // Auto-save credentials + devices when either changes (single keychain
     // write). `groups` is `.peek()`d (included in the blob, not subscribed) so a
     // device/cred change re-emits group creds too and can't clobber them.
     use_effect(move || {
+        if !*ctx.loaded.read() {
+            return;
+        }
         let creds = ctx.global_credentials.read().clone();
         let devices = ctx.devices.read().clone();
         let groups = ctx.health_groups.peek().clone();
@@ -230,6 +321,9 @@ fn App() -> Element {
     // are `.peek()`d so a group change re-emits the full keychain blob (device +
     // global creds included) — neither effect erases the other's keys.
     use_effect(move || {
+        if !*ctx.loaded.read() {
+            return;
+        }
         let groups = ctx.health_groups.read().clone();
         let creds = ctx.global_credentials.peek().clone();
         let devices = ctx.devices.peek().clone();
@@ -251,6 +345,7 @@ fn App() -> Element {
 
     rsx! {
         document::Style { {MAIN_CSS} }
+        document::Script { {STREAM_JS} }
         ErrorBoundary {
             handle_error: |errors: ErrorContext| {
                 rsx! {
@@ -331,6 +426,23 @@ fn App() -> Element {
                 }
                 ToastContainer {}
                 ConfirmDialogModal {}
+                if !*ctx.loaded.read() {
+                    div { class: "dialog-overlay",
+                        div { class: "dialog",
+                            div { class: "dialog-body",
+                                div { class: "keychain-wait-row",
+                                    span { class: "status-bar-spinner" }
+                                    span { class: "dialog-title",
+                                        {i18n::t(*ctx.locale.read(), "keychain_wait_title")}
+                                    }
+                                }
+                                p { class: "dialog-hint",
+                                    {i18n::t(*ctx.locale.read(), "keychain_wait_hint")}
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

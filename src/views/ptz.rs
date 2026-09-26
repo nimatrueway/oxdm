@@ -1,15 +1,22 @@
 #![allow(non_snake_case)]
 use crate::components::Icon;
 use crate::state::{Credentials, Ctx, ToastLevel};
-use crate::views::live_video::{LiveH265Tip, LiveModeTabs, LiveVideoMode, LiveVideoStage};
+use crate::views::live_video::{LiveModeTabs, LiveVideoMode, LiveVideoStage};
 use crate::{api, i18n};
 use dioxus::prelude::*;
 
+/// Preview pane height bounds (px) for the draggable splitter. The default
+/// matches `.imaging-preview`'s fixed 320px so the view opens as before.
+const PREVIEW_DEFAULT_H: f64 = 320.0;
+const PREVIEW_MIN_H: f64 = 120.0;
+const PREVIEW_MAX_H: f64 = 1600.0;
+
 /// PTZ control panel.
 ///
-/// Layout mirrors `ImagingView`: live preview on top, controls below.
-/// The controls split into a directional pad + zoom column on the left and
-/// a preset list on the right. Preset list scrolls when overflowing.
+/// Layout mirrors `ImagingView`: live preview on top, controls below, with a
+/// draggable splitter between them. The controls split into a directional
+/// pad + zoom column on the left and a preset list on the right; the whole
+/// controls area scrolls vertically when it doesn't fit.
 #[component]
 pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Element {
     let ctx = use_context::<Ctx>();
@@ -22,7 +29,7 @@ pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Ele
     // Per-view backend choice — same Snapshot/RTSP toggle as Live Video.
     // Independent state from the other views so each tab remembers its
     // own preference for the current session.
-    let preview_mode = use_signal(|| LiveVideoMode::Snapshot);
+    let preview_mode = use_signal(LiveVideoMode::default);
     let preview_backend_id = use_memo(move || preview_mode.read().backend_id());
 
     // Feature-detect PTZ on this camera. Just a capabilities probe —
@@ -408,8 +415,24 @@ pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Ele
     });
 
     // ── Render ─────────────────────────────────────────────────────────────
+    // Preview height is user-adjustable via the splitter under it. The drag is
+    // tracked on the whole view so the pointer may leave the thin handle.
+    let mut preview_h = use_signal(|| PREVIEW_DEFAULT_H);
+    let mut split_drag: Signal<Option<(f64, f64)>> = use_signal(|| None); // (start_y, start_h)
+    let preview_style = format!("flex-basis: {}px", *preview_h.read());
+    let splitting = split_drag.read().is_some();
+
     rsx! {
-        div { class: "ptz-view",
+        div {
+            class: if splitting { "ptz-view ptz-view--splitting" } else { "ptz-view" },
+            onpointermove: move |e: Event<PointerData>| {
+                if let Some((y0, h0)) = *split_drag.peek() {
+                    let dy = e.data().client_coordinates().y - y0;
+                    preview_h.set((h0 + dy).clamp(PREVIEW_MIN_H, PREVIEW_MAX_H));
+                }
+            },
+            onpointerup: move |_| split_drag.set(None),
+            onpointerleave: move |_| split_drag.set(None),
             div { class: "content-header",
                 Icon { name: "crosshair", size: 20 }
                 span { class: "content-title", {i18n::t(locale, "nav_ptz")} }
@@ -418,13 +441,19 @@ pub fn PtzControlView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Ele
                     span { class: "ptz-status-error", " · {e}" }
                 }
             }
-            LiveH265Tip { mode: preview_mode }
-            div { class: "imaging-preview",
+            div { class: "imaging-preview ptz-preview", style: "{preview_style}",
                 LiveVideoStage {
                     addr,
                     creds,
                     backend_id: Some(preview_backend_id.into()),
                 }
+            }
+            div {
+                class: "ptz-splitter",
+                onpointerdown: move |e: Event<PointerData>| {
+                    e.prevent_default();
+                    split_drag.set(Some((e.data().client_coordinates().y, *preview_h.peek())));
+                },
             }
 
             div { class: "ptz-body",

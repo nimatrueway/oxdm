@@ -56,14 +56,6 @@ impl Locale {
     }
 }
 
-// ── Device list tab ─────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DeviceListTab {
-    Discovered,
-    Manual,
-}
-
 /// Which target the Health Overview is showing — shared between the sidebar
 /// Groups tab (which selects it) and the Health view (which renders it).
 #[derive(Clone, Debug, PartialEq)]
@@ -333,6 +325,11 @@ pub struct Ctx {
     /// Toggled in the About dialog, saved to config.toml, applies
     /// immediately (next snapshot fetch reads the global atomic).
     pub tls_strict: Signal<bool>,
+    /// False until the keychain blob + devices.toml + healthcheck.toml have
+    /// been read. The keychain read blocks on the OS permission prompt, so it
+    /// runs off the render path; the save effects stay inert until this flips
+    /// so the empty initial state can't overwrite what's on disk.
+    pub loaded: Signal<bool>,
     /// Pending global keyboard shortcut. Producers (root onkeydown) write
     /// here; consumers (DeviceList, etc.) react via use_effect and clear
     /// the slot back to None. `Esc` is handled by individual modals via

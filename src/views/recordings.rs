@@ -9,12 +9,12 @@ use oxvif::RecordingInformation;
 
 /// Profile G recording playback. Lists the device's stored recordings
 /// (via `api::search_recordings`) on the left; selecting one resolves its
-/// RTSP replay URI (`api::get_replay_uri`) and plays it through the go2rtc
-/// bridge on the right.
+/// RTSP replay URI (`api::get_replay_uri`) and plays it through the native
+/// RTSP backend on the right.
 ///
 /// MVP scope: whole-recording playback. Timeline seeking needs ONVIF replay
-/// RTSP headers (`Range` / `Require: onvif/replay`) that go2rtc doesn't drive,
-/// so it's deferred — see ROADMAP.md #4 (risk R1).
+/// RTSP headers (`Range` / `Require: onvif/replay`) that the backend doesn't
+/// drive, so it's deferred — see ROADMAP.md #4 (risk R1).
 #[component]
 pub fn RecordingsView(addr: ReadSignal<String>, creds: Memo<Credentials>) -> Element {
     let ctx = use_context::<Ctx>();
@@ -123,7 +123,7 @@ fn RecordingRow(
     }
 }
 
-/// Resolve the replay URI for `recording_token` and play it via go2rtc.
+/// Resolve the replay URI for `recording_token` and play it via the RTSP backend.
 /// Remounted (keyed on the token) whenever the user picks another recording,
 /// so the `use_resource` re-fetches cleanly.
 #[component]
@@ -135,10 +135,10 @@ fn ReplayStage(
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
 
-    // Resolve the replay URI and register it with go2rtc. We return the URI
-    // alongside the player source so the view can show it and offer a copy
-    // action — important because ONVIF replay often needs RTSP control headers
-    // (`Require: onvif-replay`) that go2rtc, a generic RTSP client, does not
+    // Resolve the replay URI and register it with the RTSP backend. We return
+    // the URI alongside the player source so the view can show it and offer a
+    // copy action — important because ONVIF replay often needs RTSP control
+    // headers (`Require: onvif-replay`) that a generic RTSP client does not
     // send; on those devices the player stays blank and the user needs the URI
     // for a replay-capable tool. See the advisory below.
     let source = use_resource(move || {
@@ -150,7 +150,7 @@ fn ReplayStage(
                 return Err("no_device".to_string());
             }
             // Replay is RTSP-only; the snapshot backend can't do it.
-            let backend = video::go2rtc().ok_or_else(|| "no_backend".to_string())?;
+            let backend = video::rtsp().ok_or_else(|| "no_backend".to_string())?;
             let uri = api::get_replay_uri(&addr, &creds, &token)
                 .await
                 .map_err(|e| format!("replay_uri:{e}"))?;
@@ -195,10 +195,10 @@ fn ReplayStage(
             let uri = uri.clone();
             rsx! {
                 div { class: "recordings-replay",
-                    // Advisory: go2rtc plays plain-RTSP/H.264 replay, but cannot
-                    // drive ONVIF replay control headers — so on devices that
-                    // require them the frame stays blank. Always shown (we can't
-                    // reliably detect go2rtc's downstream connect failure here).
+                    // Advisory: the backend plays plain-RTSP/H.264 replay, but
+                    // cannot drive ONVIF replay control headers — so on devices
+                    // that require them the frame stays blank. Always shown (we
+                    // can't reliably detect the downstream connect failure here).
                     div { class: "recordings-replay-note",
                         Icon { name: "info", size: 14 }
                         span { class: "recordings-replay-note-body",
@@ -223,17 +223,11 @@ fn ReplayStage(
                             EmbedKind::Img => rsx! {
                                 img { class: "live-video-frame", src: "{src.url}", alt: "recording replay" }
                             },
-                            EmbedKind::Video => rsx! {
-                                video {
-                                    class: "live-video-frame",
-                                    src: "{src.url}",
-                                    autoplay: true,
-                                    controls: true,
-                                    muted: true,
+                            EmbedKind::Stream => rsx! {
+                                div {
+                                    class: "live-video-frame live-video-frame--stream",
+                                    dangerous_inner_html: video::stream_element_html(&src.url),
                                 }
-                            },
-                            EmbedKind::Iframe => rsx! {
-                                iframe { class: "live-video-frame", src: "{src.url}" }
                             },
                         }
                     }

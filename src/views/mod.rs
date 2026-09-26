@@ -5,6 +5,7 @@ pub mod io_control;
 pub mod live_video;
 mod main_content;
 pub mod osd;
+pub mod pip;
 pub mod ptz;
 pub mod recordings;
 pub mod settings;

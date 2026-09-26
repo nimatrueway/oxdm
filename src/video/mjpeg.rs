@@ -15,6 +15,13 @@
 //! into an `<img>` tag with no JS or polyfill needed — it's the same
 //! technology mid-2000s IP-cam web UIs used.
 //!
+//! The same listener also fronts the native RTSP backend: `GET /ws/{id}`
+//! is upgraded to a WebSocket and `GET /mjpeg/{id}` streams its software
+//! decode; both are handed to [`crate::video::rtsp`].
+//!
+//! Cameras whose `GetSnapshotUri` faults (TP-Link Tapo) skip the snapshot
+//! loop entirely: `open` embeds the RTSP backend's MJPEG route instead.
+//!
 //! No new third-party dependency: the HTTP server is hand-rolled over a
 //! `tokio::net::TcpListener`, mirroring the raw-TCP pattern already used
 //! for the snapshot Digest fallback in [`crate::api`].
@@ -76,6 +83,7 @@ impl MjpegBackend {
             .port();
         let listener = tokio::net::TcpListener::from_std(listener)
             .map_err(|e| format!("MJPEG: tokio::TcpListener::from_std failed: {e}"))?;
+        crate::video::set_server_port(port);
 
         let inner = Arc::new(RwLock::new(Inner::default()));
         let inner_for_loop = Arc::clone(&inner);
@@ -89,7 +97,7 @@ impl MjpegBackend {
                         let inner = Arc::clone(&inner_for_loop);
                         tokio::spawn(async move {
                             if let Err(e) = handle_connection(sock, inner, frame_interval).await {
-                                debug!(?peer, error = %e, "MJPEG connection ended");
+                                info!(?peer, error = %e, "video server connection ended");
                             }
                         });
                     }
@@ -125,6 +133,24 @@ impl VideoBackend for MjpegBackend {
         profile_token: &str,
         creds: &Credentials,
     ) -> Result<VideoSource, String> {
+        // Some cameras (TP-Link Tapo) fault on GetSnapshotUri yet stream RTSP
+        // fine. Rather than loop on a dead snapshot URL, embed the RTSP
+        // backend's software-decoded MJPEG route instead.
+        if let Err(e) = api::get_snapshot_uri(device_addr, creds, profile_token).await {
+            if let Some(rtsp) = crate::video::rtsp() {
+                if let Ok(src) = rtsp.open(device_addr, profile_token, creds).await {
+                    if let Some(url) = crate::video::rtsp::mjpeg_url(&src.id) {
+                        info!(device_addr, profile_token, error = %e, "no ONVIF snapshot URI; using RTSP decode");
+                        return Ok(VideoSource {
+                            id: src.id,
+                            url,
+                            embed: EmbedKind::Img,
+                        });
+                    }
+                }
+            }
+        }
+
         // Stream id is `{addr}::{profile_token}`. Re-opening the same pair
         // is a cheap dedupe; the connection handler always reads the most
         // recent meta from `inner` so credential changes propagate next frame.
@@ -198,6 +224,39 @@ async fn handle_connection(
         .await?;
         return Ok(());
     }
+
+    // Native RTSP backend routes. `/ws/` needs the upgrade key from the
+    // headers we've already consumed, so the handshake reply is written by
+    // hand and the socket handed to tungstenite post-handshake.
+    if let Some(id) = path.strip_prefix("/ws/") {
+        let key = head
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.trim()
+                    .eq_ignore_ascii_case("sec-websocket-key")
+                    .then(|| v.trim().to_string())
+            })
+            .ok_or("missing Sec-WebSocket-Key")?;
+        let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+        let resp = format!(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+        );
+        sock.write_all(resp.as_bytes())
+            .await
+            .map_err(|e| format!("write 101: {e}"))?;
+        let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            sock,
+            tokio_tungstenite::tungstenite::protocol::Role::Server,
+            None,
+        )
+        .await;
+        return crate::video::rtsp::serve_ws(ws, &url_decode(id)).await;
+    }
+    if let Some(id) = path.strip_prefix("/mjpeg/") {
+        return crate::video::rtsp::serve_mjpeg(sock, &url_decode(id)).await;
+    }
+
     let Some(stream_id_enc) = path.strip_prefix("/stream/") else {
         write_text(&mut sock, 404, "Not Found", "Unknown route").await?;
         return Ok(());

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- dx bundle REPLACES its generated Info.plist with this file rather than
+	     merging, so every key it would have emitted must be repeated here.
+	     Keep the version fields in sync with Cargo.toml. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleDisplayName</key>
+	<string>Oxdm</string>
+	<key>CFBundleExecutable</key>
+	<string>oxdm</string>
+	<key>CFBundleIconFile</key>
+	<string>Oxdm.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.smiti1642.oxdm</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Oxdm</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.4.1</string>
+	<key>CFBundleVersion</key>
+	<string>0.4.1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.13</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!-- macOS 15+ gates every LAN connection (WS-Discovery multicast, SOAP,
+	     RTSP) behind the Local Network permission; shown in the system prompt. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OxDM discovers and manages ONVIF cameras on your local network.</string>
+</dict>
+</plist>

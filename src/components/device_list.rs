@@ -7,8 +7,7 @@ use crate::{
     },
     i18n,
     state::{
-        AuthStatus, ConfirmDialog, Ctx, DeviceEntry, DeviceListTab, DragPending, HealthDeviceRef,
-        ToastLevel, View,
+        AuthStatus, ConfirmDialog, Ctx, DeviceEntry, DragPending, HealthDeviceRef, ToastLevel, View,
     },
     util,
 };
@@ -109,18 +108,12 @@ fn visible_device_indices(
     filter_lower: &str,
     status: StatusFilter,
     sort: SortBy,
-    tab: DeviceListTab,
 ) -> Vec<usize> {
     let mut indices: Vec<usize> = devs
         .iter()
         .enumerate()
         .filter(|(_, d)| {
-            let tab_match = match tab {
-                DeviceListTab::Discovered => !d.manual,
-                DeviceListTab::Manual => d.manual,
-            };
-            tab_match
-                && status.matches(d.auth_status)
+            status.matches(d.auth_status)
                 && (filter_lower.is_empty()
                     || d.name.to_lowercase().contains(filter_lower)
                     || d.display_addr.contains(filter_lower))
@@ -161,7 +154,6 @@ pub fn DeviceList() -> Element {
     let edit_device_idx: Signal<Option<usize>> = use_signal(|| None);
     let picker_open = use_signal(|| false);
     let picker_device_idx: Signal<Option<usize>> = use_signal(|| None);
-    let mut list_tab = use_signal(|| DeviceListTab::Discovered);
     let mut status_filter = use_signal(|| StatusFilter::All);
     let mut sort_by = use_signal(|| SortBy::Default);
 
@@ -174,8 +166,6 @@ pub fn DeviceList() -> Element {
     let mut selected = ctx.selected;
     let mut view = ctx.view;
     let mut devices = ctx.devices;
-
-    let active_tab = *list_tab.read();
 
     // Progressive scan: drive 3 single-round probes back-to-back so the UI
     // fills in roughly every 2 s instead of blocking on one ~9 s call.
@@ -374,7 +364,6 @@ pub fn DeviceList() -> Element {
                     &filter.peek().to_lowercase(),
                     *status_filter.peek(),
                     *sort_by.peek(),
-                    *list_tab.peek(),
                 );
                 if visible.is_empty() {
                     return;
@@ -414,20 +403,14 @@ pub fn DeviceList() -> Element {
         .iter()
         .enumerate()
         .filter(|(_, d)| {
-            // Filter by active tab
-            let tab_match = match active_tab {
-                DeviceListTab::Discovered => !d.manual,
-                DeviceListTab::Manual => d.manual,
-            };
-            tab_match
-                && active_status.matches(d.auth_status)
+            active_status.matches(d.auth_status)
                 && (filter_str.is_empty()
                     || d.name.to_lowercase().contains(&filter_str)
                     || d.display_addr.contains(&filter_str))
         })
         .collect();
 
-    // Sort last so the tab/filter work is done up front. Name is
+    // Sort last so the filter work is done up front. Name is
     // case-insensitive so mixed-case device names don't scatter; IP uses
     // numeric octets to avoid the string-sort "1.2" < "1.10" wrong-order.
     match active_sort {
@@ -435,25 +418,6 @@ pub fn DeviceList() -> Element {
         SortBy::Name => filtered.sort_by_key(|(_, d)| d.name.to_lowercase()),
         SortBy::Ip => filtered.sort_by_key(|(_, d)| ip_to_u32(&d.display_addr)),
     }
-
-    // Tab badges reflect the current filter + search, not the raw totals
-    // — otherwise "Discovered (20)" next to a list showing only 3 matches
-    // is confusing. Each badge answers "how many entries in this tab
-    // match my current filters?".
-    let matches_filters = |d: &DeviceEntry| {
-        active_status.matches(d.auth_status)
-            && (filter_str.is_empty()
-                || d.name.to_lowercase().contains(&filter_str)
-                || d.display_addr.contains(&filter_str))
-    };
-    let discovered_count = devs
-        .iter()
-        .filter(|d| !d.manual && matches_filters(d))
-        .count();
-    let manual_count = devs
-        .iter()
-        .filter(|d| d.manual && matches_filters(d))
-        .count();
 
     rsx! {
         aside { class: "sidebar",
@@ -469,26 +433,6 @@ pub fn DeviceList() -> Element {
                     } else {
                         span { class: "cred-indicator-text", "{creds_username}" }
                         Icon { name: "key", size: 12 }
-                    }
-                }
-            }
-
-            // ── Tab bar ─────────────────────────────────────────────────────
-            div { class: "sidebar-tabs",
-                button {
-                    class: if active_tab == DeviceListTab::Discovered { "sidebar-tab sidebar-tab--active" } else { "sidebar-tab" },
-                    onclick: move |_| list_tab.set(DeviceListTab::Discovered),
-                    {i18n::t(locale, "devtab_discovered")}
-                    if discovered_count > 0 {
-                        span { class: "sidebar-tab-badge", "{discovered_count}" }
-                    }
-                }
-                button {
-                    class: if active_tab == DeviceListTab::Manual { "sidebar-tab sidebar-tab--active" } else { "sidebar-tab" },
-                    onclick: move |_| list_tab.set(DeviceListTab::Manual),
-                    {i18n::t(locale, "devtab_manual")}
-                    if manual_count > 0 {
-                        span { class: "sidebar-tab-badge", "{manual_count}" }
                     }
                 }
             }
@@ -532,21 +476,10 @@ pub fn DeviceList() -> Element {
             div { class: "device-list",
                 if filtered.is_empty() {
                     div { class: "device-empty",
-                        match active_tab {
-                            DeviceListTab::Discovered => {
-                                if devs.iter().any(|d| !d.manual) {
-                                    rsx! { {i18n::t(locale, "no_matches")} }
-                                } else {
-                                    rsx! { {i18n::t(locale, "no_devices")} }
-                                }
-                            }
-                            DeviceListTab::Manual => {
-                                if devs.iter().any(|d| d.manual) {
-                                    rsx! { {i18n::t(locale, "no_matches")} }
-                                } else {
-                                    rsx! { {i18n::t(locale, "no_manual_devices")} }
-                                }
-                            }
+                        if devs.is_empty() {
+                            {i18n::t(locale, "no_devices")}
+                        } else {
+                            {i18n::t(locale, "no_matches")}
                         }
                     }
                 }
@@ -569,36 +502,27 @@ pub fn DeviceList() -> Element {
                         picker_device_idx,
                     }
                 }
-                if matches!(active_tab, DeviceListTab::Manual) {
-                    SavedMocks {}
-                }
+                SavedMocks {}
             }
 
-            // ── Footer: context-dependent buttons ───────────────────────────
             div { class: "sidebar-footer",
-                match active_tab {
-                    DeviceListTab::Discovered => rsx! {
-                        button {
-                            class: "btn btn-primary btn-sm btn-scan",
-                            disabled: is_scanning,
-                            title: if is_scanning { i18n::t(locale, "btn_scanning_tooltip") } else { "" },
-                            onclick: move |_| do_scan.call(()),
-                            if is_scanning {
-                                {i18n::t(locale, "btn_scanning")}
-                            } else {
-                                span { class: "btn-icon", Icon { name: "refresh-cw", size: 13 } }
-                                {i18n::t(locale, "btn_scan_label")}
-                            }
-                        }
-                    },
-                    DeviceListTab::Manual => rsx! {
-                        button {
-                            class: "btn btn-primary btn-sm btn-scan",
-                            onclick: move |_| add_dialog_open.set(true),
-                            span { class: "btn-icon", Icon { name: "plus", size: 13 } }
-                            {i18n::t(locale, "btn_add_label")}
-                        }
-                    },
+                button {
+                    class: "btn btn-primary btn-sm btn-scan",
+                    disabled: is_scanning,
+                    title: if is_scanning { i18n::t(locale, "btn_scanning_tooltip") } else { "" },
+                    onclick: move |_| do_scan.call(()),
+                    if is_scanning {
+                        {i18n::t(locale, "btn_scanning")}
+                    } else {
+                        span { class: "btn-icon", Icon { name: "refresh-cw", size: 13 } }
+                        {i18n::t(locale, "btn_scan_label")}
+                    }
+                }
+                button {
+                    class: "btn btn-ghost btn-sm btn-scan",
+                    onclick: move |_| add_dialog_open.set(true),
+                    span { class: "btn-icon", Icon { name: "plus", size: 13 } }
+                    {i18n::t(locale, "btn_add_label")}
                 }
             }
         }

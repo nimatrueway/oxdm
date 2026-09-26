@@ -277,6 +277,18 @@ fn icon_paths(name: &str) -> Element {
         "square" => rsx! {
             rect { width: "18", height: "18", x: "3", y: "3", rx: "2" }
         },
+        "record" => rsx! {
+            circle { cx: "12", cy: "12", r: "10" }
+            circle { cx: "12", cy: "12", r: "4", fill: "currentColor" }
+        },
+        "stop-circle" => rsx! {
+            circle { cx: "12", cy: "12", r: "10" }
+            rect { x: "9", y: "9", width: "6", height: "6", rx: "1", fill: "currentColor" }
+        },
+        "pip" => rsx! {
+            path { d: "M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4" }
+            rect { width: "10", height: "7", x: "12", y: "13", rx: "2" }
+        },
         "minus" => rsx! {
             path { d: "M5 12h14" }
         },

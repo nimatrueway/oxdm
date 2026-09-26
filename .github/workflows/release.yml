@@ -67,6 +67,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: cargo binstall -y --force dioxus-cli@0.7.9
 
+      # Cargo.toml patches `retina` to a git-ignored vendor/retina; fetch the
+      # crate and apply patches/retina-*.patch before anything resolves deps.
+      - name: Vendor patched retina
+        shell: bash
+        run: scripts/vendor-retina.sh
+
       - name: Bundle
         run: dx bundle --release --platform desktop --package-types ${{ matrix.pkg }}
 
@@ -83,9 +89,9 @@ jobs:
           cp "$src" "out/oxdm-${version}-${{ matrix.label }}.${{ matrix.ext }}"
           ls -la out
 
-      # Windows also gets a no-install portable build alongside the MSI: just
-      # the single self-contained oxdm.exe (CSS + icon are embedded, no sibling
-      # assets dir), zipped. Like the MSI it relies on the WebView2 runtime,
+      # Windows also gets a no-install portable build alongside the MSI: the
+      # self-contained oxdm.exe (CSS + icon are embedded, no sibling assets
+      # dir), zipped flat. Like the MSI it relies on the WebView2 runtime,
       # which ships with Windows 10/11.
       - name: Add Windows portable zip
         if: matrix.pkg == 'msi'
@@ -97,7 +103,7 @@ jobs:
           echo "portable exe: $exe"
           mkdir -p out
           # Copy to a flat name first so the zip holds `oxdm.exe` at its root,
-          # not the full target/.../release/ path (7z stores paths as given).
+          # not the full staging path (7z stores paths as given).
           cp "$exe" oxdm.exe
           7z a "out/oxdm-${version}-windows-x86_64-portable.zip" oxdm.exe
           rm oxdm.exe

@@ -340,6 +340,12 @@ struct ProfileInfo {
     /// per-call timestamp pointing at a temp file the camera then deletes.
     invalid_after_connect: bool,
     creds: Credentials,
+    /// Camera-side `fixed` flag: DeleteProfile is refused, so "delete" hides.
+    fixed: bool,
+    /// Bound to a video encoder — an RTSP key frame can stand in for a
+    /// missing snapshot URI.
+    has_video: bool,
+    hidden: bool,
 }
 
 #[component]
@@ -364,9 +370,27 @@ fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
 
             let profiles = api::get_profiles(&addr, &creds).await?;
             debug!(addr = %addr, count = profiles.len(), "GetProfiles OK");
+            let hidden_set = crate::persist::load_hidden_profiles();
 
             let mut infos = Vec::new();
             for profile in &profiles {
+                let hidden =
+                    hidden_set.contains(&crate::persist::hidden_profile_key(&addr, &profile.token));
+                let base = ProfileInfo {
+                    profile_token: profile.token.clone(),
+                    profile_name: profile.name.clone(),
+                    snapshot_url: None,
+                    invalid_after_connect: false,
+                    creds: creds.clone(),
+                    fixed: profile.fixed,
+                    has_video: profile.video_encoder_token.is_some(),
+                    hidden,
+                };
+                // Hidden cards render as a one-line row; skip the snapshot probe.
+                if hidden {
+                    infos.push(base);
+                    continue;
+                }
                 // ONVIF Profile S: only profiles bound to a video encoder
                 // configuration support GetSnapshotUri. Metadata-only,
                 // audio-only and analytics-only profiles will either return
@@ -379,13 +403,7 @@ fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
                         name = %profile.name,
                         "Skipping GetSnapshotUri (no video encoder configuration)"
                     );
-                    infos.push(ProfileInfo {
-                        profile_token: profile.token.clone(),
-                        profile_name: profile.name.clone(),
-                        snapshot_url: None,
-                        invalid_after_connect: false,
-                        creds: creds.clone(),
-                    });
+                    infos.push(base);
                     continue;
                 }
                 match api::get_snapshot_uri(&addr, &creds, &profile.token).await {
@@ -401,11 +419,9 @@ fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
                             "GetSnapshotUri OK"
                         );
                         infos.push(ProfileInfo {
-                            profile_token: profile.token.clone(),
-                            profile_name: profile.name.clone(),
                             snapshot_url: Some(snapshot_url),
                             invalid_after_connect: snap.invalid_after_connect,
-                            creds: creds.clone(),
+                            ..base
                         });
                     }
                     Err(e) => {
@@ -414,15 +430,9 @@ fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
                             profile = %profile.token,
                             name = %profile.name,
                             error = %e,
-                            "GetSnapshotUri FAILED — profile shown without thumbnail"
+                            "GetSnapshotUri FAILED — thumbnail will come from RTSP"
                         );
-                        infos.push(ProfileInfo {
-                            profile_token: profile.token.clone(),
-                            profile_name: profile.name.clone(),
-                            snapshot_url: None,
-                            invalid_after_connect: false,
-                            creds: creds.clone(),
-                        });
+                        infos.push(base);
                     }
                 }
             }
@@ -442,6 +452,7 @@ fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
         .read()
         .and_then(|i| ctx.devices.read().get(i).map(|d| d.addr.clone()))
         .unwrap_or_default();
+    let mut show_hidden = use_signal(|| false);
 
     rsx! {
         match &*profiles_res.read_unchecked() {
@@ -462,27 +473,80 @@ fn ProfileThumbnails(gate: api::DeviceGate) -> Element {
             Some(Ok((_, infos))) if infos.is_empty() => rsx! {
                 div { class: "thumb-empty", {i18n::t(locale, "no_profiles")} }
             },
-            Some(Ok((_, infos))) => rsx! {
-                div { class: "thumb-grid",
-                    for info in infos {
-                        ProfileCard {
-                            key: "{addr_now}::{info.profile_token}",
-                            gate,
+            Some(Ok((_, infos))) => {
+                let hidden_count = infos.iter().filter(|i| i.hidden).count();
+                let showing = *show_hidden.read();
+                let chevron = if showing { "chevron-down" } else { "chevron-right" };
+                rsx! {
+                    div { class: "thumb-grid",
+                        for info in infos.iter().filter(|i| !i.hidden) {
+                            ProfileCard {
+                                key: "{addr_now}::{info.profile_token}",
+                                gate,
+                                device_addr: addr_now.clone(),
+                                profile_token: info.profile_token.clone(),
+                                profile_name: info.profile_name.clone(),
+                                snapshot_url: info.snapshot_url.clone(),
+                                invalid_after_connect: info.invalid_after_connect,
+                                creds: info.creds.clone(),
+                                fixed: info.fixed,
+                                has_video: info.has_video,
+                                on_changed: move |_| profiles_res.restart(),
+                            }
+                        }
+                        NewProfileCard {
                             device_addr: addr_now.clone(),
-                            profile_token: info.profile_token.clone(),
-                            profile_name: info.profile_name.clone(),
-                            snapshot_url: info.snapshot_url.clone(),
-                            invalid_after_connect: info.invalid_after_connect,
-                            creds: info.creds.clone(),
-                            on_changed: move |_| profiles_res.restart(),
+                            on_created: move |_| profiles_res.restart(),
                         }
                     }
-                    NewProfileCard {
-                        device_addr: addr_now.clone(),
-                        on_created: move |_| profiles_res.restart(),
+                    if hidden_count > 0 {
+                        button {
+                            class: "thumb-hidden-toggle",
+                            onclick: move |_| { let v = !*show_hidden.peek(); show_hidden.set(v); },
+                            Icon { name: chevron, size: 12 }
+                            {i18n::t(locale, "profiles_hidden_count").replace("{n}", &hidden_count.to_string())}
+                        }
+                        if showing {
+                            div { class: "thumb-hidden-list",
+                                for info in infos.iter().filter(|i| i.hidden) {
+                                    HiddenProfileRow {
+                                        key: "{addr_now}::{info.profile_token}",
+                                        device_addr: addr_now.clone(),
+                                        profile_token: info.profile_token.clone(),
+                                        profile_name: info.profile_name.clone(),
+                                        on_changed: move |_| profiles_res.restart(),
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             },
+        }
+    }
+}
+
+#[component]
+fn HiddenProfileRow(
+    device_addr: String,
+    profile_token: String,
+    profile_name: String,
+    on_changed: EventHandler<()>,
+) -> Element {
+    let ctx = use_context::<Ctx>();
+    let locale = *ctx.locale.read();
+    rsx! {
+        div { class: "thumb-hidden-row",
+            span { class: "thumb-label", "{profile_name}" }
+            button {
+                class: "thumb-action",
+                title: i18n::t(locale, "profile_unhide"),
+                onclick: move |_| {
+                    crate::persist::set_profile_hidden(&device_addr, &profile_token, false);
+                    on_changed.call(());
+                },
+                Icon { name: "eye", size: 12 }
+            }
         }
     }
 }
@@ -501,6 +565,8 @@ fn ProfileCard(
     /// one — see `ProfileInfo::invalid_after_connect`.
     invalid_after_connect: bool,
     creds: Credentials,
+    fixed: bool,
+    has_video: bool,
     /// Fired after a successful create/delete so the parent's
     /// `profiles_res` can restart and re-render the grid.
     on_changed: EventHandler<()>,
@@ -568,6 +634,18 @@ fn ProfileCard(
             } else {
                 match url {
                     Some(u) => u,
+                    // No ONVIF snapshot URI (Tapo): decode a key frame out
+                    // of the RTSP stream instead. Not marked broken — the
+                    // session may simply still be connecting.
+                    None if has_video => {
+                        return crate::video::rtsp::snapshot_jpeg(
+                            &device_addr,
+                            &profile_token,
+                            &creds,
+                        )
+                        .await
+                        .map(|b| crate::util::jpeg_data_uri(&b));
+                    }
                     None => return Err("No snapshot".to_string()),
                 }
             };
@@ -598,6 +676,7 @@ fn ProfileCard(
     let token_ptz = profile_token.clone();
     let name_for_save = profile_name.clone();
     let data_uri_for_save = data_uri;
+    let delete_icon = if fixed { "eye-off" } else { "x" };
 
     rsx! {
         div {
@@ -673,11 +752,11 @@ fn ProfileCard(
                             }
                         });
                     },
-                    Icon { name: "download", size: 12 }
+                    Icon { name: "camera", size: 12 }
                 }
                 button {
                     class: "thumb-profile-delete",
-                    title: i18n::t(locale, "profile_delete"),
+                    title: if fixed { i18n::t(locale, "profile_hide") } else { i18n::t(locale, "profile_delete") },
                     onclick: move |e| {
                         e.stop_propagation();
                         let token = token_for_delete.clone();
@@ -685,6 +764,14 @@ fn ProfileCard(
                         let creds = creds_for_delete.clone();
                         let name = name_for_delete.clone();
                         let on_changed = on_changed;
+                        // Fixed profiles can't be deleted camera-side; hide
+                        // locally, no confirmation needed since it's reversible.
+                        if fixed {
+                            crate::persist::set_profile_hidden(&device_addr, &token, true);
+                            ctx.push_toast(crate::state::ToastLevel::Success, i18n::t(locale, "profile_hidden"));
+                            on_changed.call(());
+                            return;
+                        }
                         let confirm_label = i18n::t(locale, "btn_confirm").to_string();
                         let cancel_label = i18n::t(locale, "btn_cancel").to_string();
                         let title = i18n::t(locale, "profile_delete_title").to_string();
@@ -713,7 +800,7 @@ fn ProfileCard(
                             }),
                         }));
                     },
-                    Icon { name: "x", size: 12 }
+                    Icon { name: delete_icon, size: 12 }
                 }
             }
             div { class: "thumb-footer",

@@ -1,4 +1,38 @@
-use crate::state::{Credentials, Locale, Theme};
+use crate::persist::{settings_tab_from_str, settings_tab_to_str, view_from_str, view_to_str};
+use crate::state::{Credentials, Locale, SettingsTab, Theme, View};
+
+/// session.toml stores these as strings; a variant that doesn't survive the
+/// round trip silently reopens on Welcome / Identification.
+#[test]
+fn session_view_and_tab_strings_round_trip() {
+    for v in [
+        View::Welcome,
+        View::DeviceSettings,
+        View::LiveVideo,
+        View::ImagingSettings,
+        View::PtzControl,
+        View::Events,
+        View::Osd,
+        View::IoControl,
+        View::Recordings,
+        View::HealthOverview,
+    ] {
+        assert_eq!(view_from_str(view_to_str(v)), v);
+    }
+    for t in [
+        SettingsTab::Identification,
+        SettingsTab::Network,
+        SettingsTab::Time,
+        SettingsTab::Users,
+        SettingsTab::Maintenance,
+        SettingsTab::Health,
+        SettingsTab::Quirks,
+    ] {
+        assert_eq!(settings_tab_from_str(settings_tab_to_str(t)), t);
+    }
+    assert_eq!(view_from_str("garbage"), View::Welcome);
+    assert_eq!(settings_tab_from_str(""), SettingsTab::Identification);
+}
 
 #[test]
 fn theme_cycles_correctly() {
