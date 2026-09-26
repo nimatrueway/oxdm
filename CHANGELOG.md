@@ -6,6 +6,14 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.1] - 2026-09-26
+
+### Fixed
+- Use fixed-size PCM sample chunks for the L16 byte swap, satisfying Rust 1.98
+  Clippy without changing the decoded audio or incomplete-sample handling.
+
+---
+
 ## [0.6.0] - 2026-09-26
 
 A camera-first workspace with shared live-video controls and remembered

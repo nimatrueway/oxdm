@@ -469,7 +469,13 @@ impl AudioPipe {
             AudioCodec::Pcma => Some(g711_to_s16(data, alaw_to_i16)),
             AudioCodec::Pcmu => Some(g711_to_s16(data, ulaw_to_i16)),
             // RFC 3551 L16 is big-endian; the wire format is little-endian.
-            AudioCodec::L16 => Some(data.chunks_exact(2).flat_map(|c| [c[1], c[0]]).collect()),
+            AudioCodec::L16 => Some(
+                data.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .flat_map(|sample| [sample[1], sample[0]])
+                    .collect(),
+            ),
             AudioCodec::Aac(dec) => {
                 use symphonia::core::codecs::audio::AudioDecoder;
                 use symphonia::core::packet::PacketRef;
