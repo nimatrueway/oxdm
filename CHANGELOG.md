@@ -6,7 +6,7 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
-## [Unreleased]
+## [0.6.2] - 2026-09-28
 
 ### Added
 - Trackpad pinch zooms the video picture (live, PiP, and recording replay) up to
