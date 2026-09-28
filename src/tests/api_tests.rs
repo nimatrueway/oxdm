@@ -771,3 +771,21 @@ fn the_result_never_leaves_the_declared_range() {
     assert!(far <= r.max, "{far} exceeds the declared maximum");
     assert!(near >= r.min, "{near} is below the declared minimum");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn key_frame_thumbnails_use_the_lens_smallest_h264_stream() {
+    let server = oxvif::mock::MockServer::start()
+        .await
+        .expect("mock server boots");
+    let addr = server.device_url().to_string();
+    let creds = crate::state::Credentials::default();
+    let profiles = crate::api::get_profiles(&addr, &creds).await.unwrap();
+    let lens = |token: &str| profiles.iter().find(|p| p.token == token).unwrap();
+
+    // Sensor 1: the 704x480 sub-stream, not the 1080p main.
+    let pick = crate::api::smallest_h264_profile(&addr, &creds, &profiles, lens("Profile_1")).await;
+    assert_eq!(pick.as_deref(), Some("Profile_2"));
+    // Sensor 2's smaller stream is JPEG, which the key-frame decoder can't read.
+    let pick = crate::api::smallest_h264_profile(&addr, &creds, &profiles, lens("Profile_3")).await;
+    assert_eq!(pick.as_deref(), Some("Profile_3"));
+}

@@ -11,6 +11,8 @@
 //! * One text message first: JSON [`StreamInit`] — WebCodecs codec string,
 //!   base64 `avcC`/`hvcC` description, dimensions, PCM audio format.
 //!   Re-sent if the camera changes parameters mid-stream.
+//! * Text `{"type":"error","message":str}` whenever the camera session
+//!   fails (first line of the error); the next init means it recovered.
 //! * Binary messages: `[kind u8][flags u8][ts_us u64 LE][payload]`.
 //!   `kind` 0 = video (AVCC-framed access unit; `flags & 1` = key frame),
 //!   1 = audio (interleaved s16 LE PCM, already decoded here).
@@ -120,6 +122,8 @@ pub struct StreamState {
     creds: Option<retina::client::Credentials>,
     frames: broadcast::Sender<Arc<MediaFrame>>,
     init: watch::Sender<Option<Arc<StreamInit>>>,
+    /// First line of the latest failure while the session retries; cleared by PLAY.
+    error: watch::Sender<Option<String>>,
     running: AtomicBool,
 }
 
@@ -130,6 +134,8 @@ impl StreamState {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
+            // A previous session's failure must not greet this one's consumers.
+            self.error.send_replace(None);
             let me = Arc::clone(self);
             tokio::spawn(async move {
                 let id = me.id.clone();
@@ -204,12 +210,14 @@ impl Registry {
         });
         let (frames, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (init, _) = watch::channel(None);
+        let (error, _) = watch::channel(None);
         let state = Arc::new(StreamState {
             id: id.to_string(),
             url: Mutex::new(url),
             creds,
             frames,
             init,
+            error,
             running: AtomicBool::new(false),
         });
         map.insert(id.to_string(), Arc::clone(&state));
@@ -240,6 +248,9 @@ async fn run_session(state: Arc<StreamState>) {
                     break;
                 }
                 warn!(id = %state.id, error = %e, "RTSP session error; reconnecting");
+                state
+                    .error
+                    .send_replace(e.lines().next().map(str::to_owned));
                 tokio::time::sleep(RECONNECT_BACKOFF).await;
             }
         }
@@ -307,6 +318,7 @@ async fn pull_once(state: &Arc<StreamState>) -> Result<(), String> {
     let mut n_audio: u64 = 0;
     let mut last_report = Instant::now();
     info!(id = %state.id, "RTSP session playing");
+    state.error.send_replace(None);
 
     loop {
         let item = tokio::time::timeout(STALL_TIMEOUT, demuxed.next())
@@ -544,8 +556,23 @@ pub async fn serve_ws(mut ws: WebSocketStream<TcpStream>, id: &str) -> Result<()
     info!(id, "ws consumer connected");
     state.ensure_running();
     let (mut frames, mut init_rx) = state.subscribe();
+    let mut error_rx = state.error.subscribe();
+    // Relay a failure that happened before this player connected, too.
+    error_rx.mark_changed();
 
-    let init = state.wait_init(&mut init_rx).await?;
+    let init = loop {
+        tokio::select! {
+            init = state.wait_init(&mut init_rx) => break init?,
+            Ok(()) = error_rx.changed() => {
+                let error = error_rx.borrow_and_update().clone();
+                if let Some(message) = error {
+                    ws.send(error_message(&message))
+                        .await
+                        .map_err(|e| format!("ws send error: {e}"))?;
+                }
+            }
+        }
+    };
     let init_json = serde_json::to_string(&*init).map_err(|e| e.to_string())?;
     ws.send(Message::Text(init_json.into()))
         .await
@@ -599,11 +626,25 @@ pub async fn serve_ws(mut ws: WebSocketStream<TcpStream>, id: &str) -> Result<()
                     want_key = true;
                 }
             }
+            Ok(()) = error_rx.changed() => {
+                let error = error_rx.borrow_and_update().clone();
+                if let Some(message) = error {
+                    if ws.send(error_message(&message)).await.is_err() { break; }
+                }
+            }
         }
     }
     let _ = ws.close(None).await;
     info!(id, "ws consumer disconnected");
     Ok(())
+}
+
+fn error_message(message: &str) -> Message {
+    Message::Text(
+        serde_json::json!({ "type": "error", "message": message })
+            .to_string()
+            .into(),
+    )
 }
 
 // ── MJPEG fallback consumer ──────────────────────────────────────────────────
@@ -1201,5 +1242,45 @@ mod tests {
         // 0xD5 is A-law zero, 0xFF is µ-law zero.
         assert!(alaw_to_i16(0xD5).abs() <= 8);
         assert!(ulaw_to_i16(0xFF).abs() <= 8);
+    }
+
+    #[tokio::test]
+    async fn a_failing_session_tells_the_player_why() {
+        // The listener is dropped at once, so every DESCRIBE is refused.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let id = "test-refused-session";
+        registry().get_or_insert(
+            id,
+            format!("rtsp://127.0.0.1:{port}/stream1"),
+            &Credentials::default(),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(sock).await.unwrap();
+            let _ = serve_ws(ws, id).await;
+        });
+        let (mut player, _) = tokio_tungstenite::connect_async(format!("ws://{ws_addr}/"))
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(10), player.next())
+            .await
+            .expect("an error arrives long before the init wait gives up")
+            .unwrap()
+            .unwrap();
+        let msg: serde_json::Value = serde_json::from_str(first.to_text().unwrap()).unwrap();
+        assert_eq!(msg["type"], "error");
+        let text = msg["message"].as_str().unwrap();
+        assert!(
+            text.starts_with("DESCRIBE:") && !text.contains('\n'),
+            "{text}"
+        );
+        registry().remove(id);
     }
 }

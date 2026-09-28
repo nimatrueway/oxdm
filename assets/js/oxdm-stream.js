@@ -2,6 +2,7 @@
 // RTSP backend (src/video/rtsp.rs). The WebSocket delivers one JSON "init"
 // message, then binary frames: [kind u8][flags u8][ts_us u64 LE][payload].
 // kind 0 = video (AVCC access unit, flags&1 = key), 1 = audio (s16le PCM).
+// A JSON "error" message reports a failing camera session until the next init.
 //
 // Video is decoded with WebCodecs and painted to a <canvas>. Decoded frames
 // are not shown the instant they land: RTP over TCP arrives in bursts, and
@@ -23,6 +24,7 @@ const ICON_PLAY = svg('<polygon points="6 3 20 12 6 21 6 3"/>');
 const ICON_PAUSE = svg('<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>');
 const ICON_SOUND = svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>');
 const ICON_MUTED = svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>');
+const ICON_ALERT = svg('<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>');
 
 class OxdmStream extends HTMLElement {
     static get observedAttributes() { return ['src']; }
@@ -61,6 +63,13 @@ class OxdmStream extends HTMLElement {
         this.ctx2d = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
         this.appendChild(this.canvas);
 
+        this.errorEl = document.createElement('div');
+        this.errorEl.className = 'oxdm-stream-error';
+        this.errorEl.hidden = true;
+        this.errorEl.innerHTML = ICON_ALERT;
+        this.errorText = this.errorEl.appendChild(document.createElement('span'));
+        this.appendChild(this.errorEl);
+
         this.bar = document.createElement('div');
         this.bar.className = 'oxdm-live-bar';
 
@@ -75,6 +84,9 @@ class OxdmStream extends HTMLElement {
         const badge = document.createElement('span');
         badge.className = 'oxdm-live-badge';
         badge.textContent = 'LIVE';
+
+        this.zoomLabel = document.createElement('span');
+        this.zoomLabel.className = 'oxdm-live-zoom';
 
         this.muteBtn = document.createElement('button');
         this.muteBtn.type = 'button';
@@ -91,7 +103,7 @@ class OxdmStream extends HTMLElement {
             this.refreshBar();
         });
 
-        this.bar.append(this.playBtn, badge, this.muteBtn);
+        this.bar.append(this.playBtn, badge, this.zoomLabel, this.muteBtn);
         // Frameless PiP starts a window drag on mousedown; keep clicks on
         // the controls from doing that.
         for (const button of [this.playBtn, this.muteBtn]) {
@@ -121,8 +133,10 @@ class OxdmStream extends HTMLElement {
         const ws = new WebSocket(url);
         ws.binaryType = 'arraybuffer';
         ws.onmessage = ev => {
-            if (typeof ev.data === 'string') this.onInit(JSON.parse(ev.data));
-            else this.onFrame(ev.data);
+            if (typeof ev.data !== 'string') return this.onFrame(ev.data);
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'error') this.showError(msg.message);
+            else this.onInit(msg);
         };
         ws.onclose = () => {
             if (this.ws !== ws) return;
@@ -164,10 +178,16 @@ class OxdmStream extends HTMLElement {
         }
     }
 
+    showError(message) {
+        this.errorText.textContent = message;
+        this.errorEl.hidden = !message;
+    }
+
     // ── Init / codec setup ───────────────────────────────────────────────
 
     onInit(init) {
         if (init.type !== 'init') return;
+        this.showError('');
         this.hasAudio = !!init.audio;
         this.audioInfo = init.audio;
         this.sendAudioPref();
@@ -301,7 +321,9 @@ class OxdmStream extends HTMLElement {
         // Draw at the size actually shown, not the source size: a 2K frame
         // painted into a 2K canvas and then CSS-scaled costs several times
         // more fill than scaling once here, and it all lands on the main thread.
-        const dpr = window.devicePixelRatio || 1;
+        // Digital zoom is a CSS scale on the canvas, so it enlarges what is shown.
+        const zoom = zoomState.get(this.canvas);
+        const dpr = (window.devicePixelRatio || 1) * (zoom ? zoom.s : 1);
         const boxW = Math.max(1, Math.round(this.clientWidth * dpr));
         const boxH = Math.max(1, Math.round(this.clientHeight * dpr));
         const scale = Math.min(1, boxW / frame.displayWidth, boxH / frame.displayHeight);
@@ -365,5 +387,88 @@ function base64ToBytes(b64) {
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
 }
+
+// ── Digital zoom ─────────────────────────────────────────────────────────
+// Pinch zooms any .live-video-frame around the pointer; two-finger scroll pans
+// it while zoomed. Only the picture is transformed — the camera is not asked
+// to zoom. WebKit reports a trackpad pinch as gesture* events, Chromium as
+// ctrl+wheel.
+const MAX_ZOOM = 8;
+const zoomState = new WeakMap(); // picture element -> { s, x, y }
+let pinch = null;                // { media, scale } during a WebKit gesture
+
+// The element holding the pixels: a plain <img> frame, or the player's
+// canvas/<img> inside <oxdm-stream>.
+function zoomTarget(node) {
+    const frame = node instanceof Element ? node.closest('.live-video-frame') : null;
+    if (!frame) return null;
+    return frame.matches('img') ? frame : frame.querySelector('.oxdm-stream-canvas');
+}
+
+function setZoom(media, s, x, y) {
+    const w = media.clientWidth, h = media.clientHeight;
+    if (s <= 1 || !w || !h) {
+        zoomState.delete(media);
+        media.style.transform = '';
+        return;
+    }
+    // object-fit: contain letterboxes the picture, so clamp against the
+    // picture rather than the element box.
+    const nw = media.naturalWidth || media.width, nh = media.naturalHeight || media.height;
+    const fit = Math.min(w / nw, h / nh);
+    x = clampPan(x, s, w, nw * fit);
+    y = clampPan(y, s, h, nh * fit);
+    zoomState.set(media, { s, x, y });
+    media.style.transformOrigin = '0 0';
+    media.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+}
+
+// Keep the scaled picture covering the box on this axis, or centred while
+// it is still smaller than the box.
+function clampPan(t, s, box, pic) {
+    const inset = (box - pic) / 2 * s;
+    if (pic * s <= box) return (box - pic * s) / 2 - inset;
+    return Math.min(-inset, Math.max(box - inset - pic * s, t));
+}
+
+function zoomBy(media, factor, clientX, clientY) {
+    const cur = zoomState.get(media) || { s: 1, x: 0, y: 0 };
+    const s = Math.min(MAX_ZOOM, Math.max(1, cur.s * factor));
+    const k = s / cur.s;
+    // Pointer in untransformed element coordinates; the point under it stays put.
+    const r = media.getBoundingClientRect();
+    const px = clientX - r.left + cur.x, py = clientY - r.top + cur.y;
+    setZoom(media, s, px - (px - cur.x) * k, py - (py - cur.y) * k);
+    const player = media.closest('oxdm-stream');
+    if (player) player.zoomLabel.textContent = s > 1 ? `${s.toFixed(2)}x` : '';
+}
+
+document.addEventListener('wheel', e => {
+    const media = zoomTarget(e.target);
+    if (!media) return;
+    const cur = zoomState.get(media);
+    if (e.ctrlKey) {
+        e.preventDefault();
+        zoomBy(media, Math.exp(-e.deltaY / 100), e.clientX, e.clientY);
+    } else if (cur) {
+        e.preventDefault();
+        setZoom(media, cur.s, cur.x - e.deltaX, cur.y - e.deltaY);
+    }
+}, { passive: false });
+
+document.addEventListener('gesturestart', e => {
+    const media = zoomTarget(e.target);
+    if (!media) return;
+    e.preventDefault();
+    pinch = { media, scale: 1 };
+});
+document.addEventListener('gesturechange', e => {
+    if (!pinch) return;
+    e.preventDefault();
+    // e.scale is cumulative since gesturestart; apply only the step.
+    zoomBy(pinch.media, e.scale / pinch.scale, e.clientX, e.clientY);
+    pinch.scale = e.scale;
+});
+document.addEventListener('gestureend', () => { pinch = null; });
 
 customElements.define('oxdm-stream', OxdmStream);

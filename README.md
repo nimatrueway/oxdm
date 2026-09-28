@@ -134,10 +134,13 @@ The equivalent Fedora packages are `webkit2gtk4.1-devel`, `gtk3-devel`,
 - **Live video** — always-on MJPEG snapshot stream, or RTSP (H.264/H.265 +
   audio) decoded in-process: a pure-Rust RTSP client feeds the WebView's
   WebCodecs decoder, with an OpenH264 → MJPEG fallback where WebCodecs is
-  unavailable. No sidecar binaries or ffmpeg required.
+  unavailable. No sidecar binaries or ffmpeg required. Pinch the trackpad to
+  zoom the picture digitally (up to 8×); two-finger scroll pans while zoomed.
+  If the camera refuses or drops the stream, the player shows its error.
 - **Optional camera operations** — unsupported `GetSnapshotUri` responses are
   remembered per camera/profile, allowing the existing RTSP snapshot fallback
-  without repeated SOAP requests. `GetImagingStatus` support is tracked per
+  without repeated SOAP requests. That fallback feeds sidebar thumbnails from the
+  lens's smallest H.264 stream. `GetImagingStatus` support is tracked per
   camera/video source. Decisions are scoped to credentials and reset with the
   session or app restart; authentication and transient failures remain retryable.
 - **Snapshots and local recording** — snapshots save immediately from any

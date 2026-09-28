@@ -6,6 +6,21 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [Unreleased]
+
+### Added
+- Trackpad pinch zooms the video picture (live, PiP, and recording replay) up to
+  8× around the pointer; two-finger scroll pans while zoomed. Digital only — no
+  camera zoom command is sent. The factor shows beside the mute button.
+- The RTSP player shows the camera session's error while it retries, instead of
+  a black frame. The next successful start clears it.
+
+### Changed
+- Sidebar thumbnails for cameras without a snapshot URI (such as Tapo) decode key
+  frames from the lens's smallest H.264 stream instead of its main stream.
+
+---
+
 ## [0.6.1] - 2026-09-26
 
 ### Added

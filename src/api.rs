@@ -2114,6 +2114,33 @@ pub async fn get_video_encoder_configuration(
     )
 }
 
+/// Token of the lowest-resolution profile on `lens`'s video source, for
+/// pulling key frames cheaply. H.264 only: that is all the snapshot decoder reads.
+pub async fn smallest_h264_profile(
+    addr: &str,
+    creds: &Credentials,
+    profiles: &[MediaProfile],
+    lens: &MediaProfile,
+) -> Option<String> {
+    let mut best: Option<(u32, &MediaProfile)> = None;
+    for profile in profiles
+        .iter()
+        .filter(|p| p.video_source_token == lens.video_source_token)
+    {
+        let Some(encoder) = profile.video_encoder_token.as_deref() else {
+            continue;
+        };
+        let Ok(cfg) = get_video_encoder_configuration(addr, creds, encoder).await else {
+            continue;
+        };
+        let area = cfg.resolution.width * cfg.resolution.height;
+        if cfg.encoding == VideoEncoding::H264 && best.is_none_or(|(a, _)| area < a) {
+            best = Some((area, profile));
+        }
+    }
+    best.map(|(_, p)| p.token.clone())
+}
+
 #[instrument(skip(creds), fields(addr, config_token))]
 pub async fn get_video_encoder_configuration_options(
     addr: &str,

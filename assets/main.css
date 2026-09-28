@@ -1823,6 +1823,7 @@ a      { color: var(--blue); text-decoration: none; }
 .pip-root {
   position: fixed;
   inset: 0;
+  overflow: hidden;
   background: #000;
 }
 .pip-root .live-video-frame--stream oxdm-stream,
@@ -2476,6 +2477,10 @@ iframe.live-video-frame {
   background: #000;
 }
 .oxdm-stream--live .oxdm-live-badge { background: var(--red); }
+/* Hardcoded colours: the PiP window has no theme class to supply variables */
+.oxdm-stream-error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; background: rgba(0,0,0,0.6); color: rgba(255,255,255,0.75); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: center; overflow-wrap: anywhere; pointer-events: none; }
+.oxdm-stream-error[hidden] { display: none; }
+.oxdm-stream-error svg { width: 28px; height: 28px; }
 /* Live control bar replacing the native seekable controls */
 .oxdm-live-bar {
   position: absolute;
@@ -2505,7 +2510,8 @@ iframe.live-video-frame {
 }
 .oxdm-live-bar button:hover { background: rgba(0,0,0,0.75); }
 .oxdm-live-bar button:disabled { opacity: 0.4; cursor: default; }
-.oxdm-live-bar button:last-child { margin-left: auto; }
+/* Always present (empty at 1x) so the mute button keeps its place at the edge */
+.oxdm-live-zoom { margin-left: auto; color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
 .oxdm-live-badge {
   font-size: 10px;
   font-weight: 700;

@@ -809,12 +809,21 @@ fn CameraThumbnail(
             };
             let token = profile.token.as_str();
             let mut snapshot = api::get_snapshot_uri(&addr, &creds, token).await.ok();
+            // RTSP key frames come off the smallest stream, leaving the main one to viewers.
+            let rtsp_token = if snapshot.is_some() {
+                token.to_string()
+            } else {
+                api::smallest_h264_profile(&addr, &creds, &profiles, profile)
+                    .await
+                    .unwrap_or_else(|| token.to_string())
+            };
             loop {
                 let data_uri = if let Some(snapshot) = &snapshot {
                     let url = api::resolve_snapshot_url(&addr, &snapshot.uri);
                     api::fetch_snapshot_data_uri(&url, &creds).await?
                 } else {
-                    let bytes = crate::video::rtsp::snapshot_jpeg(&addr, token, &creds).await?;
+                    let bytes =
+                        crate::video::rtsp::snapshot_jpeg(&addr, &rtsp_token, &creds).await?;
                     util::jpeg_data_uri(&bytes)
                 };
                 image.set(Some(data_uri));
