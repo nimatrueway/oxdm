@@ -40,10 +40,16 @@ jobs:
 
       - name: Inspect and collect Arch package
         run: |
-          package="oxdm-${GITHUB_REF_NAME#v}-1-x86_64.pkg.tar.zst"
+          source PKGBUILD
+          package="${pkgname}-${pkgver}-${pkgrel}-x86_64.pkg.tar.zst"
           test -f "$package"
           namcap PKGBUILD "$package" | tee namcap.log
           if grep -q ' E: ' namcap.log; then
+            exit 1
+          fi
+          pacman -U --noconfirm "$package"
+          ldd /usr/bin/oxdm | tee ldd.log
+          if grep -q 'not found' ldd.log; then
             exit 1
           fi
           mkdir -p out
