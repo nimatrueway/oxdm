@@ -7,7 +7,7 @@ on the [`oxvif`](https://github.com/smiti1642/oxvif) ONVIF client library.
 
 ![OxDM managing an ONVIF camera — device list, profile panel, and the device identification settings tab](https://raw.githubusercontent.com/smiti1642/oxdm/main/docs/screenshot.png)
 
-> **Project status — pre-release (v0.6.2).** Built on oxvif 0.16.0. Core device management works
+> **Project status — pre-release (v0.6.3).** Built on oxvif 0.16.0. Core device management works
 > end-to-end against real cameras and the `oxvif` mock server. Release bundles
 > are not yet code-signed, so the operating system may warn about an
 > unidentified developer on first launch.
@@ -39,6 +39,7 @@ Bundles for each release are attached to the corresponding
 | Windows (x86-64) — installer | `oxdm-<version>-windows-x86_64.msi` | Start-menu shortcut |
 | Windows (x86-64) — portable | `oxdm-<version>-windows-x86_64-portable.zip` | unzip and run `oxdm.exe` |
 | Linux — Ubuntu / Debian (x86-64) | `oxdm-<version>-ubuntu-x86_64.deb` | `sudo apt install ./<file>.deb` |
+| Linux — Arch (x86-64) | `oxdm-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./<file>.pkg.tar.zst` |
 
 The bundles are **not code-signed**, so every OS shows a first-run warning.
 Notes:
@@ -58,6 +59,36 @@ Notes:
 - **Fedora / RHEL-based distributions are not yet supported** as a prebuilt
   package (a different WebKitGTK layout, no `.deb`). Native support is planned
   via Flatpak. Until then, build from source (below).
+
+### Arch Linux
+
+Download the `.pkg.tar.zst` package and its `.sha256` file from
+[GitHub Releases](https://github.com/nimatrueway/oxdm/releases), then verify
+and install them from the download directory:
+
+```sh
+sha256sum -c oxdm-0.6.3-1-x86_64.pkg.tar.zst.sha256
+sudo pacman -U ./oxdm-0.6.3-1-x86_64.pkg.tar.zst
+```
+
+Pacman installs the required system libraries, desktop launcher, and icons.
+Launch **OxDM** from your app launcher or run `oxdm`. A working Secret Service
+provider, such as GNOME Keyring or KeePassXC, is needed to save camera credentials.
+The package is not in AUR or an automatic-update repository; install newer release
+packages with the same `pacman -U` command.
+
+To build from source instead, install Arch's `base-devel` and `git`, clone this
+repository, and run `makepkg -si` from its root. The recipe prepares the pinned
+RTSP dependency and runs its checks; no separate `cargo install` is needed.
+The recipe builds the release tag declared in `PKGBUILD`, not uncommitted local
+edits. The Retina archive is checksum-verified, and Cargo uses the committed
+lockfile.
+
+If upgrading from a user-local Cargo installation, an older
+`~/.local/bin/oxdm` or `~/.cargo/bin/oxdm` can shadow `/usr/bin/oxdm`. Likewise,
+`~/.local/share/applications/oxdm.desktop` can shadow the packaged desktop entry.
+Back up and remove only your old OxDM launcher files after verifying
+`/usr/bin/oxdm`; leave `~/.oxdm` intact to preserve cameras and settings.
 
 ### Build from source
 
@@ -97,6 +128,16 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
 
 The equivalent Fedora packages are `webkit2gtk4.1-devel`, `gtk3-devel`,
 `libayatana-appindicator-gtk3-devel`, and `libxdo-devel`.
+
+### Hyprland window chrome
+
+On Linux, OxDM detects Hyprland through `HYPRLAND_INSTANCE_SIGNATURE` or a
+`Hyprland` entry in `XDG_CURRENT_DESKTOP`. In that session the main window
+omits its native title bar and the generic Window/Edit menu, leaving more
+space for the camera workspace. Use your compositor's bindings to move,
+resize, close, or toggle fullscreen; the in-app toolbar and settings remain
+available. Other Linux desktops, Windows, and macOS keep their native chrome.
+Picture-in-picture remains frameless as before.
 
 ## Features
 

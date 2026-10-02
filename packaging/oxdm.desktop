@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OxDM
+GenericName=ONVIF Device Manager
+Comment=Manage ONVIF IP cameras
+Exec=oxdm
+TryExec=oxdm
+Icon=oxdm
+Terminal=false
+Categories=Network;
+Keywords=ONVIF;camera;RTSP;IP camera;

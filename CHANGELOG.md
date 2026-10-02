@@ -6,6 +6,19 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.3] - 2026-10-02
+
+### Added
+- Native Arch Linux packages distributed through GitHub Releases, with a
+  repository `PKGBUILD` for local builds and normal pacman dependency handling.
+- Checksummed Retina source preparation for package and cross-platform builds.
+
+### Changed
+- Under Hyprland, omit the GTK title bar and generic Window/Edit menu while
+  retaining the camera toolbar. Other desktops keep their native window chrome.
+
+---
+
 ## [0.6.2] - 2026-09-28
 
 ### Added

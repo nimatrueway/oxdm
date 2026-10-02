@@ -18,6 +18,7 @@
 | Windows (x86_64) — installer | `oxdm-<version>-windows-x86_64.msi` |
 | Windows (x86_64) — portable | `oxdm-<version>-windows-x86_64-portable.zip` |
 | Linux — Ubuntu/Debian (x86_64) | `oxdm-<version>-ubuntu-x86_64.deb` |
+| Linux — Arch (x86_64) | `oxdm-<version>-1-x86_64.pkg.tar.zst` and `.sha256` |
 
 ## Windows
 
@@ -29,6 +30,16 @@
   runtime from Microsoft.
 
 ## Linux (pre-release)
+
+For Arch Linux, download the package and its checksum file:
+
+```bash
+sha256sum -c oxdm-<version>-1-x86_64.pkg.tar.zst.sha256
+sudo pacman -U ./oxdm-<version>-1-x86_64.pkg.tar.zst
+```
+
+No AUR package is needed. Pacman resolves dependencies; install a newer release
+package manually to update.
 
 The Linux build is a **`.deb` for Ubuntu 24.04+ / Debian-based** distros
 (built on Ubuntu 24.04). It depends on the system WebKitGTK, so install it

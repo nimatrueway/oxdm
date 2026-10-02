@@ -4,6 +4,7 @@
 //! `#[test]` collection; cfg(test) gates the whole tree from `main.rs`.
 
 mod api_tests;
+mod desktop_tests;
 mod i18n_tests;
 mod state_tests;
 mod util_tests;

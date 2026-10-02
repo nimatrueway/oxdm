@@ -3,12 +3,12 @@
 # on crates.io by an unrelated crate. The installed command / executable stays
 # `oxdm` via the [[bin]] entry below.
 name = "oxvif-device-manager"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 description = "A cross-platform desktop ONVIF IP camera manager built with Dioxus, on top of oxvif."
 authors = ["smiti1642"]
 license = "MIT"
-repository = "https://github.com/smiti1642/oxdm"
+repository = "https://github.com/nimatrueway/oxdm"
 readme = "README.md"
 keywords = ["onvif", "ip-camera", "dioxus", "desktop", "rtsp"]
 categories = ["multimedia", "gui"]

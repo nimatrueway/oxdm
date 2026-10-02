@@ -10,6 +10,54 @@ permissions:
   contents: write
 
 jobs:
+  arch:
+    name: Arch Linux (x86_64)
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install package dependencies
+        run: |
+          source PKGBUILD
+          test "$pkgver" = "${GITHUB_REF_NAME#v}"
+          pacman -Syu --noconfirm --needed \
+            "${depends[@]}" "${makedepends[@]}" "${checkdepends[@]}" namcap
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Build and check Arch package
+        run: |
+          sudo -u builder env CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" \
+            bash -c 'cd "$1"; makepkg --log' bash "$GITHUB_WORKSPACE"
+
+      - name: Inspect and collect Arch package
+        run: |
+          package="oxdm-${GITHUB_REF_NAME#v}-1-x86_64.pkg.tar.zst"
+          test -f "$package"
+          namcap PKGBUILD "$package" | tee namcap.log
+          if grep -q ' E: ' namcap.log; then
+            exit 1
+          fi
+          mkdir -p out
+          cp "$package" out/
+          cd out
+          sha256sum "$package" > "$package.sha256"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          fail_on_unmatched_files: true
+          files: out/*
+
   bundle:
     name: ${{ matrix.label }} (${{ matrix.pkg }})
     strategy:

@@ -110,6 +110,26 @@ pub fn log_dir() -> Option<std::path::PathBuf> {
     dirs::home_dir().map(|h| h.join(".oxdm").join("logs"))
 }
 
+#[cfg(target_os = "linux")]
+fn hyprland_session(signature: Option<&str>, desktop: Option<&str>) -> bool {
+    signature.is_some_and(|value| !value.trim().is_empty())
+        || desktop.is_some_and(|value| {
+            value
+                .split(':')
+                .any(|name| name.trim().eq_ignore_ascii_case("Hyprland"))
+        })
+}
+
+fn main_window_builder(hyprland: bool) -> dioxus::desktop::WindowBuilder {
+    dioxus::desktop::WindowBuilder::new()
+        .with_title("OxDM")
+        .with_window_icon(load_window_icon())
+        .with_inner_size(dioxus::desktop::LogicalSize::new(1280.0, 800.0))
+        .with_min_inner_size(dioxus::desktop::LogicalSize::new(900.0, 500.0))
+        // Dioxus also drops its default Window/Edit menu for undecorated windows.
+        .with_decorations(!hyprland)
+}
+
 fn main() {
     // Read just the log preference up-front so init_logging knows whether
     // to spin up the file appender. The full config is re-loaded inside
@@ -120,16 +140,16 @@ fn main() {
 
     tracing::info!(log_to_file, "OxDM starting");
 
+    #[cfg(target_os = "linux")]
+    let hyprland = hyprland_session(
+        std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok().as_deref(),
+        std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+    );
+    #[cfg(not(target_os = "linux"))]
+    let hyprland = false;
+
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(
-            dioxus::desktop::Config::new().with_window(
-                dioxus::desktop::WindowBuilder::new()
-                    .with_title("OxDM")
-                    .with_window_icon(load_window_icon())
-                    .with_inner_size(dioxus::desktop::LogicalSize::new(1280.0, 800.0))
-                    .with_min_inner_size(dioxus::desktop::LogicalSize::new(900.0, 500.0)),
-            ),
-        )
+        .with_cfg(dioxus::desktop::Config::new().with_window(main_window_builder(hyprland)))
         .launch(App);
 }
 
