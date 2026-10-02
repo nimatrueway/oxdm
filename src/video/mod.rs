@@ -75,6 +75,8 @@ pub struct VideoSource {
 /// `id`, `is_available` and `close` aren't called yet by user-facing code
 /// but exist for the planned settings UI (toggle backend, surface status,
 /// release streams when leaving Live Video).
+// async-trait adds #[must_use] to methods returning an already-must-use Future.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait VideoBackend: Send + Sync {
     /// Stable short identifier used in logs and persisted settings.
