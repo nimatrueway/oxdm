@@ -292,6 +292,23 @@ fn icon_paths(name: &str) -> Element {
             path { d: "M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4" }
             rect { width: "10", height: "7", x: "12", y: "13", rx: "2" }
         },
+        "maximize" => rsx! {
+            path { d: "M8 3H5a2 2 0 0 0-2 2v3" }
+            path { d: "M16 3h3a2 2 0 0 1 2 2v3" }
+            path { d: "M8 21H5a2 2 0 0 1-2-2v-3" }
+            path { d: "M16 21h3a2 2 0 0 0 2-2v-3" }
+        },
+        "more-horizontal" => rsx! {
+            circle { cx: "5", cy: "12", r: "1" }
+            circle { cx: "12", cy: "12", r: "1" }
+            circle { cx: "19", cy: "12", r: "1" }
+        },
+        "minimize" => rsx! {
+            path { d: "M8 3v3a2 2 0 0 1-2 2H3" }
+            path { d: "M16 3v3a2 2 0 0 0 2 2h3" }
+            path { d: "M8 21v-3a2 2 0 0 0-2-2H3" }
+            path { d: "M16 21v-3a2 2 0 0 1 2-2h3" }
+        },
         "minus" => rsx! {
             path { d: "M5 12h14" }
         },

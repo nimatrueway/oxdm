@@ -6,6 +6,22 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.4] - 2026-10-03
+
+### Added
+- Theater mode in the live toolbar: fill the application
+  window with the active live video, hiding navigation, camera controls, and
+  PTZ overlays without restarting the stream. A hover-revealed exit button
+  restores the previous layout.
+- Theater-mode labels in English, Traditional Chinese, and Russian.
+
+### Changed
+- Simplify the live toolbar by grouping picture-in-picture, Recordings,
+  Camera settings, and playback options in a labeled More options menu.
+  Snapshot, Record, and Theater remain visible.
+
+---
+
 ## [0.6.3] - 2026-10-02
 
 ### Added

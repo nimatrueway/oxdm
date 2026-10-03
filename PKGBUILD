@@ -1,6 +1,6 @@
 # Maintainer: nimatrueway
 pkgname=oxdm
-pkgver=0.6.3
+pkgver=0.6.4
 pkgrel=1
 pkgdesc='ONVIF IP camera manager with live video, PTZ, and device diagnostics'
 arch=('x86_64')

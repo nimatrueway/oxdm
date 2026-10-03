@@ -72,6 +72,8 @@ pub fn LiveVideoView(
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
     let mode = use_signal(LiveVideoMode::default);
+    let mut theater = use_signal(|| false);
+    let mut menu_open = use_signal(|| false);
     let ptz_speed = ctx.ptz_speed;
     let pan_preview = use_signal(PanPreview::default);
     let profile_sig = ctx.selected_profile;
@@ -123,9 +125,11 @@ pub fn LiveVideoView(
     } else {
         "record"
     };
+    let theater_open = *theater.read();
 
     rsx! {
-        div { class: "live-video-view",
+        div {
+            class: if theater_open { "live-video-view live-video-view--theater" } else { "live-video-view" },
             div { class: "content-header live-toolbar",
                 ProfileSelector { addr, creds }
                 for (target, available, icon, label) in [
@@ -147,21 +151,6 @@ pub fn LiveVideoView(
                 }
                 if gate.ptz {
                     DragPanButton { addr, creds, speed: ptz_speed, preview: pan_preview, enabled: can_save }
-                }
-                details { class: "playback-options",
-                    summary {
-                        class: "icon-btn",
-                        title: i18n::t(locale, "workspace_playback"),
-                        aria_label: i18n::t(locale, "workspace_playback"),
-                        Icon { name: "video", size: 16 }
-                    }
-                    div { class: "playback-options-body",
-                        span { {i18n::t(locale, "workspace_playback")} }
-                        LiveModeTabs { mode }
-                        if let Some(name) = backend_display {
-                            span { class: "live-video-backend", "{name}" }
-                        }
-                    }
                 }
                 button {
                     class: "icon-btn live-video-save",
@@ -254,36 +243,84 @@ pub fn LiveVideoView(
                     Icon { name: rec_icon, size: 16 }
                 }
                 button {
-                    class: "icon-btn live-video-pip",
+                    class: "icon-btn live-video-theater",
                     disabled: !can_save,
-                    title: i18n::t(locale, "pip_open"),
+                    title: i18n::t(locale, "theater_open"),
+                    aria_label: i18n::t(locale, "theater_open"),
                     onclick: move |_| {
-                        let Some(token) = profile_sig.read().clone() else { return };
-                        let addr = addr.read().clone();
-                        let creds = creds.read().clone();
-                        let backend_name = *backend_id.read();
-                        let toast_ctx = ctx;
-                        let failed_label = i18n::t(locale, "live_video_error").to_string();
-                        let title = ctx
-                            .selected
-                            .read()
-                            .and_then(|i| ctx.devices.read().get(i).map(|d| d.name.clone()))
-                            .unwrap_or_else(|| crate::util::extract_ip(&addr));
-                        spawn(async move {
-                            let backend = match backend_name {
-                                "rtsp" => video::rtsp(),
-                                _ => video::mjpeg(),
-                            };
-                            let Some(backend) = backend else { return };
-                            match backend.open(&addr, &token, &creds).await {
-                                Ok(src) => crate::views::pip::open(src, title),
-                                Err(e) => toast_ctx.push_toast(crate::state::ToastLevel::Error, format!("{failed_label}: {e}")),
-                            }
-                        });
+                        menu_open.set(false);
+                        theater.set(true);
                     },
-                    Icon { name: "pip", size: 16 }
+                    Icon { name: "maximize", size: 16 }
                 }
-                DevicePanel { gate }
+                div {
+                    class: "live-menu",
+                    onkeydown: move |event| {
+                        if event.key() == Key::Escape && *menu_open.peek() {
+                            event.prevent_default();
+                            event.stop_propagation();
+                            menu_open.set(false);
+                        }
+                    },
+                    button {
+                        class: "icon-btn",
+                        title: i18n::t(locale, "workspace_more"),
+                        aria_label: i18n::t(locale, "workspace_more"),
+                        aria_expanded: *menu_open.read(),
+                        aria_controls: "live-more-options",
+                        onclick: move |_| menu_open.toggle(),
+                        Icon { name: "more-horizontal", size: 16 }
+                    }
+                    if *menu_open.read() {
+                        button {
+                            class: "live-menu-overlay",
+                            tabindex: "-1",
+                            aria_label: i18n::t(locale, "btn_close"),
+                            onmousedown: move |_| menu_open.set(false),
+                        }
+                        div { class: "live-menu-body", id: "live-more-options",
+                            button {
+                                class: "live-menu-item",
+                                disabled: !can_save,
+                                onclick: move |_| {
+                                    menu_open.set(false);
+                                    let Some(token) = profile_sig.read().clone() else { return };
+                                    let addr = addr.read().clone();
+                                    let creds = creds.read().clone();
+                                    let backend_name = *backend_id.read();
+                                    let toast_ctx = ctx;
+                                    let failed_label = i18n::t(locale, "live_video_error").to_string();
+                                    let title = ctx
+                                        .selected
+                                        .read()
+                                        .and_then(|i| ctx.devices.read().get(i).map(|d| d.name.clone()))
+                                        .unwrap_or_else(|| crate::util::extract_ip(&addr));
+                                    spawn(async move {
+                                        let backend = match backend_name {
+                                            "rtsp" => video::rtsp(),
+                                            _ => video::mjpeg(),
+                                        };
+                                        let Some(backend) = backend else { return };
+                                        match backend.open(&addr, &token, &creds).await {
+                                            Ok(src) => crate::views::pip::open(src, title),
+                                            Err(e) => toast_ctx.push_toast(crate::state::ToastLevel::Error, format!("{failed_label}: {e}")),
+                                        }
+                                    });
+                                },
+                                Icon { name: "pip", size: 16 }
+                                {i18n::t(locale, "pip_open")}
+                            }
+                            DevicePanel { gate, on_navigate: move |_| menu_open.set(false) }
+                            div { class: "live-menu-playback",
+                                span { {i18n::t(locale, "workspace_playback")} }
+                                LiveModeTabs { mode }
+                                if let Some(name) = backend_display {
+                                    span { class: "live-video-backend", "{name}" }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             div { class: if controls_open { "live-workbench live-workbench--controls" } else { "live-workbench" },
@@ -311,6 +348,15 @@ pub fn LiveVideoView(
                         } else {
                             ImagingView { key: "{profile_key}", addr, creds, show_encoder: false }
                         }
+                    }
+                }
+                if theater_open {
+                    button {
+                        class: "theater-exit",
+                        title: i18n::t(locale, "theater_exit"),
+                        aria_label: i18n::t(locale, "theater_exit"),
+                        onclick: move |_| theater.set(false),
+                        Icon { name: "minimize", size: 16 }
                     }
                 }
             }

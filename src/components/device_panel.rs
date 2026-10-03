@@ -10,28 +10,30 @@ use dioxus::prelude::*;
 use tracing::{debug, warn};
 
 #[component]
-pub fn DevicePanel(gate: api::DeviceGate) -> Element {
+pub fn DevicePanel(gate: api::DeviceGate, on_navigate: EventHandler<()>) -> Element {
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
     let active = ctx.view.read().workspace_tab(*ctx.settings_tab.read());
 
     rsx! {
-        nav { class: "camera-actions",
+        nav { class: "live-menu-navigation",
             for (tab, icon, label, target) in [
                 (WorkspaceTab::Recordings, "clock", "nav_recordings", View::Recordings),
                 (WorkspaceTab::Settings, "wrench", "nav_settings", View::DeviceSettings),
             ] {
                 if tab != WorkspaceTab::Recordings || gate.recordings || active == Some(tab) {
                     button {
-                        class: "icon-btn",
+                        class: "live-menu-item",
                         title: i18n::t(locale, label),
                         aria_label: i18n::t(locale, label),
                         disabled: ctx.selected.read().is_none(),
                         onclick: move |_| {
                             ctx.settings_tab.clone().set(SettingsTab::Identification);
                             ctx.view.clone().set(target);
+                            on_navigate.call(());
                         },
                         Icon { name: icon, size: 16 }
+                        {i18n::t(locale, label)}
                     }
                 }
             }
