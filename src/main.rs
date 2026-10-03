@@ -125,9 +125,38 @@ fn main_window_builder(hyprland: bool) -> dioxus::desktop::WindowBuilder {
         .with_title("OxDM")
         .with_window_icon(load_window_icon())
         .with_inner_size(dioxus::desktop::LogicalSize::new(1280.0, 800.0))
-        .with_min_inner_size(dioxus::desktop::LogicalSize::new(900.0, 500.0))
+        .with_min_inner_size(main_window_min_size(false))
         // Dioxus also drops its default Window/Edit menu for undecorated windows.
         .with_decorations(!hyprland)
+}
+
+pub(crate) fn main_window_min_size(theater: bool) -> dioxus::desktop::LogicalSize<f64> {
+    if theater {
+        dioxus::desktop::LogicalSize::new(320.0, 180.0)
+    } else {
+        dioxus::desktop::LogicalSize::new(900.0, 500.0)
+    }
+}
+
+pub(crate) fn main_window_layout_size(
+    size: dioxus::desktop::LogicalSize<f64>,
+) -> dioxus::desktop::LogicalSize<f64> {
+    let min = main_window_min_size(false);
+    dioxus::desktop::LogicalSize::new(size.width.max(min.width), size.height.max(min.height))
+}
+
+pub(crate) fn set_main_window_theater(
+    window: &dioxus::desktop::tao::window::Window,
+    theater: bool,
+) {
+    window.set_min_inner_size(Some(main_window_min_size(theater)));
+    if !theater {
+        let size = window.inner_size().to_logical::<f64>(window.scale_factor());
+        let restored = main_window_layout_size(size);
+        if restored != size {
+            window.set_inner_size(restored);
+        }
+    }
 }
 
 fn main() {

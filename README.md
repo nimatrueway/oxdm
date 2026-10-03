@@ -7,7 +7,7 @@ on the [`oxvif`](https://github.com/smiti1642/oxvif) ONVIF client library.
 
 ![OxDM managing an ONVIF camera — device list, profile panel, and the device identification settings tab](https://raw.githubusercontent.com/smiti1642/oxdm/main/docs/screenshot.png)
 
-> **Project status — pre-release (v0.6.4).** Built on oxvif 0.16.0. Core device management works
+> **Project status — pre-release (v0.6.5).** Built on oxvif 0.16.0. Core device management works
 > end-to-end against real cameras and the `oxvif` mock server. Release bundles
 > are not yet code-signed, so the operating system may warn about an
 > unidentified developer on first launch.
@@ -67,8 +67,8 @@ Download the `.pkg.tar.zst` package and its `.sha256` file from
 and install them from the download directory:
 
 ```sh
-sha256sum -c oxdm-0.6.4-1-x86_64.pkg.tar.zst.sha256
-sudo pacman -U ./oxdm-0.6.4-1-x86_64.pkg.tar.zst
+sha256sum -c oxdm-0.6.5-1-x86_64.pkg.tar.zst.sha256
+sudo pacman -U ./oxdm-0.6.5-1-x86_64.pkg.tar.zst
 ```
 
 Pacman installs the required system libraries, desktop launcher, and icons.
@@ -178,10 +178,14 @@ Picture-in-picture remains frameless as before.
   unavailable. No sidecar binaries or ffmpeg required. Pinch the trackpad to
   zoom the picture digitally (up to 8×); two-finger scroll pans while zoomed.
   If the camera refuses or drops the stream, the player shows its error.
+  RTSP audio stays available when video uses the MJPEG fallback; playback starts
+  muted, and the Unmute button enables audio for streams that provide it.
 - **Theater mode** — the expand button in the live toolbar fills
   the application window, hiding navigation and camera controls without
   restarting playback. Hover over the video to reveal the top-right exit button
   and restore the previous layout. This does not change OS fullscreen state.
+  Theater mode allows resizing down to 320×180; exiting restores the normal
+  900×500 workspace minimum.
 - **Compact live toolbar** — Snapshot, Record, and Theater stay visible.
   The More options (⋯) menu holds PiP, Recordings, Camera settings, and the
   RTSP / Snapshot playback choice. Click outside the menu or press Escape
@@ -383,6 +387,12 @@ Verbose logging:
 
 ```sh
 RUST_LOG=oxdm=debug dx serve --platform desktop
+```
+
+The player regression tests use Node.js's built-in runner, with no npm dependencies:
+
+```sh
+node --test assets/js/oxdm-stream.test.cjs
 ```
 
 ## License

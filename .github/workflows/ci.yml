@@ -34,6 +34,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Test stream player
+        run: node --test assets/js/oxdm-stream.test.cjs
+
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 

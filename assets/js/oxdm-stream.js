@@ -248,7 +248,7 @@ class OxdmStream extends HTMLElement {
             this.canvas.replaceWith(this.img);
         }
         this.img.src = http;
-        this.hasAudio = false; // the <img> path carries no audio
+        // Only video falls back to MJPEG; PCM audio still arrives over the WebSocket.
         this.refreshBar();
     }
 

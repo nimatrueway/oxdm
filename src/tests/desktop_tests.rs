@@ -41,3 +41,30 @@ fn hyprland_chrome_removes_only_the_window_decorations() {
     assert_eq!(hyprland.always_on_top, standard.always_on_top);
     assert!(hyprland.window_icon.is_some());
 }
+
+#[test]
+fn theater_window_allows_small_video_sizes_without_changing_normal_minimum() {
+    assert_eq!(
+        crate::main_window_min_size(true),
+        dioxus::desktop::LogicalSize::new(320.0, 180.0)
+    );
+    assert_eq!(
+        crate::main_window_min_size(false),
+        dioxus::desktop::LogicalSize::new(900.0, 500.0)
+    );
+}
+
+#[test]
+fn leaving_theater_restores_only_dimensions_below_the_layout_minimum() {
+    for (width, height, expected_width, expected_height) in [
+        (320.0, 180.0, 900.0, 500.0),
+        (640.0, 600.0, 900.0, 600.0),
+        (1200.0, 300.0, 1200.0, 500.0),
+        (1280.0, 800.0, 1280.0, 800.0),
+    ] {
+        assert_eq!(
+            crate::main_window_layout_size(dioxus::desktop::LogicalSize::new(width, height)),
+            dioxus::desktop::LogicalSize::new(expected_width, expected_height)
+        );
+    }
+}

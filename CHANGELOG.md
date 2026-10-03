@@ -6,6 +6,16 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.5] - 2026-10-03
+
+### Fixed
+- Keep RTSP audio available when the video decoder falls back to MJPEG,
+  allowing the Unmute button to work on WebKitGTK without WebCodecs.
+- Lower the theater-mode window minimum to 320×180 and restore the normal
+  900×500 minimum on exit or when leaving the live view.
+
+---
+
 ## [0.6.4] - 2026-10-03
 
 ### Added

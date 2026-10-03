@@ -74,6 +74,12 @@ pub fn LiveVideoView(
     let mode = use_signal(LiveVideoMode::default);
     let mut theater = use_signal(|| false);
     let mut menu_open = use_signal(|| false);
+    let window = use_hook(dioxus::desktop::window);
+    let theater_window = window.clone();
+    use_effect(move || {
+        crate::set_main_window_theater(&theater_window.window, *theater.read());
+    });
+    use_drop(move || crate::set_main_window_theater(&window.window, false));
     let ptz_speed = ctx.ptz_speed;
     let pan_preview = use_signal(PanPreview::default);
     let profile_sig = ctx.selected_profile;
