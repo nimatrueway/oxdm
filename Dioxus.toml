@@ -23,6 +23,7 @@ icon = ["assets/icons/icon.png"]
 # libxdo-dev). apt is simply satisfied for any already present on the system.
 [bundle.deb]
 depends = [
+    "gstreamer1.0-plugins-good",
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
     "libayatana-appindicator3-1",

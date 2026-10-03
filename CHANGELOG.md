@@ -6,6 +6,15 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.6] - 2026-10-03
+
+### Fixed
+- Declare the GStreamer good plugins as a Linux package dependency so WebKit's
+  `autoaudiosink` is available when unmuting RTSP audio. CI and release builds
+  check that the sink plugin is installed.
+
+---
+
 ## [0.6.5] - 2026-10-03
 
 ### Fixed

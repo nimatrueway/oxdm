@@ -1,12 +1,12 @@
 # Maintainer: nimatrueway
 pkgname=oxdm
-pkgver=0.6.5
+pkgver=0.6.6
 pkgrel=1
 pkgdesc='ONVIF IP camera manager with live video, PTZ, and device diagnostics'
 arch=('x86_64')
 url='https://github.com/nimatrueway/oxdm'
 license=('MIT')
-depends=('cairo' 'dbus' 'gdk-pixbuf2' 'glib2' 'glibc' 'gtk3'
+depends=('cairo' 'dbus' 'gdk-pixbuf2' 'glib2' 'glibc' 'gst-plugins-good' 'gtk3'
          'hicolor-icon-theme' 'libayatana-appindicator' 'libgcc' 'libsoup3'
          'libstdc++' 'openssl' 'wayland' 'webkit2gtk-4.1' 'xdotool')
 makedepends=('cargo' 'git')
