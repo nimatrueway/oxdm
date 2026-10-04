@@ -18,6 +18,88 @@
 const PRESENT_DELAY_MS = 150;   // jitter buffer: ~2 frames at 15 fps
 const MAX_QUEUE = 12;           // burst cap before we re-anchor the clock
 
+class WebGlVideoRenderer {
+    constructor(canvas) {
+        const gl = canvas.getContext('webgl2', {
+            alpha: false, antialias: false, depth: false, stencil: false,
+            // Keep the last picture visible while playback is paused.
+            preserveDrawingBuffer: true,
+        });
+        if (!gl) throw new Error('WebGL2 unavailable');
+        this.gl = gl;
+        const shaders = [];
+        try {
+            this.program = gl.createProgram();
+            if (!this.program) throw new Error('WebGL program allocation failed');
+            for (const [type, source] of [
+                [gl.VERTEX_SHADER, `#version 300 es
+                    out vec2 uv;
+                    void main() {
+                        vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+                        uv = vec2(p.x, 1.0 - p.y);
+                        gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+                    }`],
+                [gl.FRAGMENT_SHADER, `#version 300 es
+                    precision highp float;
+                    uniform sampler2D video;
+                    in vec2 uv;
+                    out vec4 color;
+                    void main() { color = texture(video, uv); }`],
+            ]) {
+                const shader = gl.createShader(type);
+                if (!shader) throw new Error('WebGL shader allocation failed');
+                shaders.push(shader);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    throw new Error(gl.getShaderInfoLog(shader) || 'WebGL shader compilation failed');
+                }
+                gl.attachShader(this.program, shader);
+            }
+            gl.linkProgram(this.program);
+            if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+                throw new Error(gl.getProgramInfoLog(this.program) || 'WebGL program linking failed');
+            }
+            gl.useProgram(this.program);
+            this.texture = gl.createTexture();
+            if (!this.texture) throw new Error('WebGL texture allocation failed');
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, this.texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.uniform1i(gl.getUniformLocation(this.program, 'video'), 0);
+        } catch (error) {
+            this.dispose();
+            throw error;
+        } finally {
+            for (const shader of shaders) gl.deleteShader(shader);
+        }
+    }
+
+    paint(frame, width, height) {
+        const gl = this.gl;
+        if (gl.isContextLost()) throw new Error('WebGL context lost');
+        gl.viewport(0, 0, width, height);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+        // Probe upload compatibility once per source size, not a GPU round-trip every frame.
+        if (this.frameWidth !== frame.codedWidth || this.frameHeight !== frame.codedHeight) {
+            const error = gl.getError();
+            if (error !== gl.NO_ERROR) throw new Error(`WebGL frame upload failed: ${error}`);
+            this.frameWidth = frame.codedWidth;
+            this.frameHeight = frame.codedHeight;
+        }
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    dispose() {
+        if (this.texture) this.gl.deleteTexture(this.texture);
+        if (this.program) this.gl.deleteProgram(this.program);
+        this.texture = this.program = null;
+    }
+}
+
 // Feather-style stroke icons; colour comes from the button's `currentColor`.
 const svg = (body) => `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 const ICON_PLAY = svg('<polygon points="6 3 20 12 6 21 6 3"/>');
@@ -50,6 +132,7 @@ class OxdmStream extends HTMLElement {
 
     disconnectedCallback() {
         this.teardown();
+        this.releaseRenderer();
         if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null; }
     }
 
@@ -67,8 +150,10 @@ class OxdmStream extends HTMLElement {
     build() {
         this.canvas = document.createElement('canvas');
         this.canvas.className = 'oxdm-stream-canvas';
-        this.ctx2d = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
         this.appendChild(this.canvas);
+        this.canvas.addEventListener('webglcontextlost', () => {
+            if (this.renderer) this.useCanvas2d('WebGL context lost');
+        });
 
         this.decodeIndicator = document.createElement('div');
         this.decodeIndicator.className = 'video-decode-status';
@@ -299,6 +384,8 @@ class OxdmStream extends HTMLElement {
         console.warn('[oxdm-stream] falling back to MJPEG:', reason);
         if (this.decoder) { try { this.decoder.close(); } catch (_) {} this.decoder = null; }
         this.flushQueue();
+        this.releaseRenderer();
+        this.setAttribute('data-renderer-active', 'mjpeg');
         if (!this.img) {
             this.img = document.createElement('img');
             this.img.className = 'oxdm-stream-canvas';
@@ -344,6 +431,53 @@ class OxdmStream extends HTMLElement {
     }
 
     // ── Presentation ───────────────────────────────────────────────────────
+
+    releaseRenderer() {
+        if (this.renderer) this.renderer.dispose();
+        this.renderer = null;
+    }
+
+    useCanvas2d(reason) {
+        console.warn('[oxdm-stream] using Canvas 2D:', reason);
+        this.releaseRenderer();
+        this.webglFailed = true;
+        // A canvas cannot switch context types. Preserve its geometry and digital zoom.
+        const old = this.canvas;
+        const canvas = document.createElement('canvas');
+        canvas.className = old.className;
+        canvas.width = old.width;
+        canvas.height = old.height;
+        canvas.style.cssText = old.style.cssText;
+        const zoom = zoomState.get(old);
+        if (zoom) {
+            zoomState.set(canvas, zoom);
+            zoomState.delete(old);
+        }
+        old.replaceWith(canvas);
+        this.canvas = canvas;
+        this.ctx2d = null;
+    }
+
+    drawFrame(frame, width, height) {
+        if (!this.ctx2d && !this.webglFailed && (this.getAttribute('data-renderer') ?? 'webgl2') === 'webgl2') {
+            try {
+                if (!this.renderer) this.renderer = new WebGlVideoRenderer(this.canvas);
+                this.renderer.paint(frame, width, height);
+                if (this.getAttribute('data-renderer-active') !== 'webgl2') {
+                    this.setAttribute('data-renderer-active', 'webgl2');
+                }
+                return;
+            } catch (error) {
+                this.useCanvas2d(String(error));
+            }
+        }
+        if (!this.ctx2d) this.ctx2d = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
+        if (!this.ctx2d) throw new Error('Canvas 2D unavailable');
+        this.ctx2d.drawImage(frame, 0, 0, width, height);
+        if (this.getAttribute('data-renderer-active') !== '2d') {
+            this.setAttribute('data-renderer-active', '2d');
+        }
+    }
 
     enqueue(frame) {
         this.queue.push(frame);
@@ -396,9 +530,12 @@ class OxdmStream extends HTMLElement {
             this.canvas.width = w;
             this.canvas.height = h;
         }
-        this.ctx2d.drawImage(frame, 0, 0, w, h);
-        this.reportSize(frame.displayWidth, frame.displayHeight);
-        frame.close();
+        try {
+            this.drawFrame(frame, w, h);
+            this.reportSize(frame.displayWidth, frame.displayHeight);
+        } finally {
+            frame.close();
+        }
         this.stats.painted++;
         this.setLive(true);
         this.maybeLogStats();
@@ -415,7 +552,7 @@ class OxdmStream extends HTMLElement {
         const now = performance.now();
         if (now - this.stats.since < 5000) return;
         const s = (now - this.stats.since) / 1000;
-        console.debug(`[oxdm-stream] rx ${(this.stats.received / s).toFixed(1)} fps, painted ${(this.stats.painted / s).toFixed(1)} fps, queue ${this.queue.length}, decodeQueue ${this.decoder ? this.decoder.decodeQueueSize : '-'}`);
+        console.debug(`[oxdm-stream] renderer ${this.getAttribute('data-renderer-active')}, rx ${(this.stats.received / s).toFixed(1)} fps, painted ${(this.stats.painted / s).toFixed(1)} fps, queue ${this.queue.length}, decodeQueue ${this.decoder ? this.decoder.decodeQueueSize : '-'}`);
         this.stats = { since: now, received: 0, painted: 0 };
     }
 

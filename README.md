@@ -7,7 +7,7 @@ on the [`oxvif`](https://github.com/smiti1642/oxvif) ONVIF client library.
 
 ![OxDM managing an ONVIF camera — device list, profile panel, and the device identification settings tab](https://raw.githubusercontent.com/smiti1642/oxdm/main/docs/screenshot.png)
 
-> **Project status — pre-release (v0.6.7).** Built on oxvif 0.16.0. Core device management works
+> **Project status — pre-release (v0.6.8).** Built on oxvif 0.16.0. Core device management works
 > end-to-end against real cameras and the `oxvif` mock server. Release bundles
 > are not yet code-signed, so the operating system may warn about an
 > unidentified developer on first launch.
@@ -67,8 +67,8 @@ Download the `.pkg.tar.zst` package and its `.sha256` file from
 and install them from the download directory:
 
 ```sh
-sha256sum -c oxdm-0.6.7-1-x86_64.pkg.tar.zst.sha256
-sudo pacman -U ./oxdm-0.6.7-1-x86_64.pkg.tar.zst
+sha256sum -c oxdm-0.6.8-1-x86_64.pkg.tar.zst.sha256
+sudo pacman -U ./oxdm-0.6.8-1-x86_64.pkg.tar.zst
 ```
 
 Pacman installs the required system libraries, desktop launcher, and icons.
@@ -218,6 +218,13 @@ Picture-in-picture remains frameless as before.
   Its close button hides it for the current stream, including reconnects and
   pause/resume; opening another stream shows it again. On Linux, the software
   fallback tooltip includes GStreamer install and verification guidance.
+  WebGL2 is the default renderer for WebCodecs frames, including PiP and replay.
+  Set `OXDM_VIDEO_RENDERER=2d` before launching to force Canvas 2D;
+  `OXDM_VIDEO_RENDERER=webgl2` explicitly selects the default.
+  Unsupported WebGL2, failed frame uploads, or context loss fall back to Canvas 2D
+  without changing the video decoder. WebView console frame statistics include
+  the active renderer. This is not a guarantee of zero-copy rendering; compare
+  CPU usage, frame rate, and image quality on the same stream and window size.
   Player status transition tests run with `node --test tests/oxdm_stream.test.cjs`
   (Node.js, no npm dependencies), alongside the Rust `cargo test` suite.
   The software fallback uses runtime-detected JPEG SIMD acceleration on supported

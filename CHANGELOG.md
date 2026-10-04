@@ -6,6 +6,24 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.8] - 2026-10-04
+
+### Changed
+- Render WebCodecs video frames with WebGL2 by default in live video,
+  picture-in-picture, and recording replay, avoiding the Canvas 2D presentation
+  path where supported. Source resolution and presentation scheduling are unchanged.
+- Retain `OXDM_VIDEO_RENDERER=2d` to force Canvas 2D. Unsupported WebGL2,
+  shader/upload failures, and context loss automatically fall back to Canvas 2D
+  without changing the decoder.
+
+### Added
+- Active-renderer diagnostics in WebView console frame statistics and the
+  player's `data-renderer-active` attribute, with warnings on renderer fallback.
+- Renderer lifecycle and fallback regression coverage, including frame cleanup,
+  pause/resume, reconnection, and explicit renderer selection.
+
+---
+
 ## [0.6.7] - 2026-10-04
 
 ### Added

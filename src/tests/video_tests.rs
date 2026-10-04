@@ -3,6 +3,17 @@ use crate::state::Locale;
 use crate::video::stream_element_html;
 
 #[test]
+fn stream_markup_selects_configured_renderer() {
+    let expected = match std::env::var("OXDM_VIDEO_RENDERER") {
+        Err(std::env::VarError::NotPresent) => "webgl2",
+        Ok(value) if value == "webgl2" => "webgl2",
+        _ => "2d",
+    };
+    let html = stream_element_html("ws://127.0.0.1/ws/test", Locale::En);
+    assert!(html.contains(&format!("data-renderer=\"{expected}\"")));
+}
+
+#[test]
 fn stream_markup_escapes_urls_and_localizes_decode_status() {
     for locale in [Locale::En, Locale::ZhTw, Locale::Ru] {
         let html = stream_element_html("ws://127.0.0.1/ws/a?x=\"<&>", locale);

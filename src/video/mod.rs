@@ -44,6 +44,15 @@ pub enum EmbedKind {
 /// written in `rsx!`, so views set this through `dangerous_inner_html`; the
 /// URL is ours (loopback + hashed stream name) but is escaped regardless.
 pub fn stream_element_html(url: &str, locale: Locale) -> String {
+    let renderer = match std::env::var("OXDM_VIDEO_RENDERER") {
+        Ok(value) if value == "webgl2" => "webgl2",
+        Ok(value) if value == "2d" => "2d",
+        Err(std::env::VarError::NotPresent) => "webgl2",
+        value => {
+            tracing::warn!(?value, "invalid OXDM_VIDEO_RENDERER; using Canvas 2D");
+            "2d"
+        }
+    };
     let labels = serde_json::json!({
         "waiting": {
             "label": crate::i18n::t(locale, "video_decode_waiting"),
@@ -68,7 +77,7 @@ pub fn stream_element_html(url: &str, locale: Locale) -> String {
         "dismiss": crate::i18n::t(locale, "video_decode_dismiss"),
     });
     format!(
-        "<oxdm-stream src=\"{}\" data-labels=\"{}\"></oxdm-stream>",
+        "<oxdm-stream src=\"{}\" data-renderer=\"{renderer}\" data-labels=\"{}\"></oxdm-stream>",
         escape_attribute(url),
         escape_attribute(&labels.to_string())
     )
