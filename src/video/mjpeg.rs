@@ -144,7 +144,7 @@ impl VideoBackend for MjpegBackend {
                         return Ok(VideoSource {
                             id: src.id,
                             url,
-                            embed: EmbedKind::Img,
+                            embed: EmbedKind::SoftwareMjpeg,
                         });
                     }
                 }

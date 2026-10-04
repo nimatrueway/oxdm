@@ -27,13 +27,14 @@ const ICON_MUTED = svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><li
 const ICON_ALERT = svg('<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>');
 
 class OxdmStream extends HTMLElement {
-    static get observedAttributes() { return ['src']; }
+    static get observedAttributes() { return ['src', 'data-labels']; }
 
     constructor() {
         super();
         this.muted = true;
         this.paused = false;
         this.live = false;
+        this.decodePath = 'waiting';
         this.audioNext = 0;
         this.queue = [];
         this.anchor = null;
@@ -53,6 +54,7 @@ class OxdmStream extends HTMLElement {
 
     attributeChangedCallback(name) {
         if (name === 'src' && this.canvas) { this.teardown(); this.connect(); }
+        if (name === 'data-labels' && this.decodeStatus) this.refreshDecodeStatus();
     }
 
     // ── DOM ──────────────────────────────────────────────────────────────
@@ -62,6 +64,11 @@ class OxdmStream extends HTMLElement {
         this.canvas.className = 'oxdm-stream-canvas';
         this.ctx2d = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
         this.appendChild(this.canvas);
+
+        this.decodeStatus = document.createElement('span');
+        this.decodeStatus.className = 'video-decode-status';
+        this.decodeStatus.setAttribute('role', 'status');
+        this.appendChild(this.decodeStatus);
 
         this.errorEl = document.createElement('div');
         this.errorEl.className = 'oxdm-stream-error';
@@ -121,6 +128,22 @@ class OxdmStream extends HTMLElement {
         this.muteBtn.disabled = !this.hasAudio;
         this.classList.toggle('oxdm-stream--paused', this.paused);
         this.classList.toggle('oxdm-stream--live', this.live && !this.paused);
+        this.refreshDecodeStatus();
+    }
+
+    setDecodePath(path) {
+        this.decodePath = path;
+        this.refreshDecodeStatus();
+    }
+
+    refreshDecodeStatus() {
+        const labels = JSON.parse(this.getAttribute('data-labels'));
+        const path = this.paused ? 'paused' : this.decodePath;
+        const status = labels[path];
+        this.decodeStatus.textContent = status.label;
+        this.decodeStatus.title = status.title;
+        this.decodeStatus.setAttribute('aria-label', status.title);
+        this.decodeStatus.classList.toggle('video-decode-status--software', path === 'software-mjpeg');
     }
 
     // ── Connection ───────────────────────────────────────────────────────
@@ -142,6 +165,7 @@ class OxdmStream extends HTMLElement {
             if (this.ws !== ws) return;
             this.ws = null;
             this.setLive(false);
+            if (!this.img) this.setDecodePath('waiting');
             if (!this.paused && this.isConnected) {
                 this.reconnectTID = setTimeout(() => this.connect(), 2000);
             }
@@ -157,6 +181,7 @@ class OxdmStream extends HTMLElement {
         if (this.img) { this.img.removeAttribute('src'); }
         this.flushQueue();
         this.setLive(false);
+        this.setDecodePath('waiting');
     }
 
     flushQueue() {
@@ -193,7 +218,11 @@ class OxdmStream extends HTMLElement {
         this.sendAudioPref();
         this.refreshBar();
 
-        if (this.img) return; // already on the MJPEG fallback
+        if (this.img) {
+            this.img.src = this.mjpegUrl();
+            this.setDecodePath('software-mjpeg');
+            return;
+        }
         if (!('VideoDecoder' in window)) return this.fallback('WebCodecs unavailable');
 
         const cfg = {
@@ -215,7 +244,9 @@ class OxdmStream extends HTMLElement {
                 if (!r2.supported) return this.fallback('codec ' + cfg.codec + ' unsupported');
                 this.startDecoder(cfg);
             });
-        }).catch(e => this.fallback(String(e)));
+        }).catch(e => {
+            if (this.ws === ws) this.fallback(String(e));
+        });
     }
 
     startDecoder(cfg) {
@@ -231,13 +262,17 @@ class OxdmStream extends HTMLElement {
         });
         this.decoder.configure(cfg);
         this.waitKey = true;
+        this.setDecodePath(cfg.hardwareAcceleration === 'prefer-hardware' ? 'hardware-preferred' : 'automatic');
+    }
+
+    mjpegUrl() {
+        return 'http' + this.getAttribute('src').slice(2).replace('/ws/', '/mjpeg/');
     }
 
     fallback(reason) {
         console.warn('[oxdm-stream] falling back to MJPEG:', reason);
         if (this.decoder) { try { this.decoder.close(); } catch (_) {} this.decoder = null; }
-        const src = this.getAttribute('src');
-        const http = 'http' + src.slice(2).replace('/ws/', '/mjpeg/');
+        this.flushQueue();
         if (!this.img) {
             this.img = document.createElement('img');
             this.img.className = 'oxdm-stream-canvas';
@@ -247,7 +282,8 @@ class OxdmStream extends HTMLElement {
             });
             this.canvas.replaceWith(this.img);
         }
-        this.img.src = http;
+        this.img.src = this.mjpegUrl();
+        this.setDecodePath('software-mjpeg');
         // Only video falls back to MJPEG; PCM audio still arrives over the WebSocket.
         this.refreshBar();
     }

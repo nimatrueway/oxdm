@@ -18,7 +18,9 @@
 //! bars around the video.
 
 use crate::components::Icon;
-use crate::video::{self, EmbedKind, VideoSource};
+use crate::state::Locale;
+use crate::video::VideoSource;
+use crate::views::live_video::VideoPlayer;
 use dioxus::prelude::*;
 
 const PIP_WIDTH: f64 = 480.0;
@@ -80,10 +82,11 @@ fn lock_aspect(width: u32, height: u32) {
 }
 
 /// Open `source` in a new floating window titled `title`.
-pub fn open(source: VideoSource, title: String) {
+pub fn open(source: VideoSource, title: String, locale: Locale) {
     let main_window = std::rc::Rc::downgrade(&dioxus::desktop::window());
     let props = PipWindowProps {
         source: source.clone(),
+        locale,
         return_to_main: EventHandler::new(move |_| {
             if let Some(main_window) = main_window.upgrade() {
                 main_window.window.set_minimized(false);
@@ -129,7 +132,7 @@ fn hide_chrome(builder: dioxus::desktop::WindowBuilder) -> dioxus::desktop::Wind
 }
 
 #[component]
-fn PipWindow(source: VideoSource, return_to_main: EventHandler) -> Element {
+fn PipWindow(source: VideoSource, locale: Locale, return_to_main: EventHandler) -> Element {
     use_future(|| async {
         let mut sizes = document::eval(SIZE_SCRIPT);
         let mut last = None;
@@ -161,17 +164,7 @@ fn PipWindow(source: VideoSource, return_to_main: EventHandler) -> Element {
                     window.drag();
                 }
             },
-            match source.embed {
-                EmbedKind::Img => rsx! {
-                    img { class: "live-video-frame", src: "{source.url}", alt: "live video stream" }
-                },
-                EmbedKind::Stream => rsx! {
-                    div {
-                        class: "live-video-frame live-video-frame--stream",
-                        dangerous_inner_html: video::stream_element_html(&source.url),
-                    }
-                },
-            }
+            VideoPlayer { source, locale }
             button {
                 class: "pip-close",
                 title: "Close",

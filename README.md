@@ -178,6 +178,14 @@ Picture-in-picture remains frameless as before.
   unavailable. No sidecar binaries or ffmpeg required. Pinch the trackpad to
   zoom the picture digitally (up to 8×); two-finger scroll pans while zoomed.
   If the camera refuses or drops the stream, the player shows its error.
+  An always-visible playback badge identifies camera snapshots, WebCodecs
+  (hardware preferred or automatic decoder), or software H.264 → MJPEG
+  transcoding. Hover over it for details; the software fallback is highlighted
+  because it can be CPU-intensive. “Hardware preferred” is a request, not
+  confirmation that the GPU is decoding: WebCodecs does not report that.
+  The badge also appears in PiP and recording replay.
+  Player status transition tests run with `node --test tests/oxdm_stream.test.cjs`
+  (Node.js, no npm dependencies), alongside the Rust `cargo test` suite.
   RTSP audio stays available when video uses the MJPEG fallback; playback starts
   muted, and the Unmute button enables audio for streams that provide it.
   Linux WebKit audio requires GStreamer's good plugins (`gst-plugins-good` on

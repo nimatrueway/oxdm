@@ -17,7 +17,7 @@
 //! [`current().open()`] and renders the returned [`VideoSource`] according to
 //! its [`EmbedKind`].
 
-use crate::state::Credentials;
+use crate::state::{Credentials, Locale};
 use std::sync::{Arc, OnceLock};
 
 pub mod mjpeg;
@@ -32,6 +32,8 @@ pub mod rtsp;
 pub enum EmbedKind {
     /// `<img src="…">` — multipart MJPEG, animated GIF, single image.
     Img,
+    /// `<img>` fed by the server's software H.264-to-MJPEG transcoder.
+    SoftwareMjpeg,
     /// `<oxdm-stream src="ws://…">` — the WebCodecs player element
     /// (assets/js/oxdm-stream.js) fed over a WebSocket by [`rtsp`]. Render
     /// via [`stream_element_html`].
@@ -41,13 +43,42 @@ pub enum EmbedKind {
 /// Markup for an [`EmbedKind::Stream`] source. A custom element can't be
 /// written in `rsx!`, so views set this through `dangerous_inner_html`; the
 /// URL is ours (loopback + hashed stream name) but is escaped regardless.
-pub fn stream_element_html(url: &str) -> String {
-    let esc = url
+pub fn stream_element_html(url: &str, locale: Locale) -> String {
+    let labels = serde_json::json!({
+        "waiting": {
+            "label": crate::i18n::t(locale, "video_decode_waiting"),
+            "title": crate::i18n::t(locale, "video_decode_waiting"),
+        },
+        "paused": {
+            "label": crate::i18n::t(locale, "video_decode_paused"),
+            "title": crate::i18n::t(locale, "video_decode_paused"),
+        },
+        "hardware-preferred": {
+            "label": crate::i18n::t(locale, "video_decode_hardware_preferred"),
+            "title": crate::i18n::t(locale, "video_decode_hardware_preferred_hint"),
+        },
+        "automatic": {
+            "label": crate::i18n::t(locale, "video_decode_automatic"),
+            "title": crate::i18n::t(locale, "video_decode_automatic_hint"),
+        },
+        "software-mjpeg": {
+            "label": crate::i18n::t(locale, "video_decode_software_mjpeg"),
+            "title": crate::i18n::t(locale, "video_decode_software_mjpeg_hint"),
+        },
+    });
+    format!(
+        "<oxdm-stream src=\"{}\" data-labels=\"{}\"></oxdm-stream>",
+        escape_attribute(url),
+        escape_attribute(&labels.to_string())
+    )
+}
+
+fn escape_attribute(value: &str) -> String {
+    value
         .replace('&', "&amp;")
         .replace('"', "&quot;")
         .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    format!("<oxdm-stream src=\"{esc}\"></oxdm-stream>")
+        .replace('>', "&gt;")
 }
 
 /// A handle to a currently-streaming video source.

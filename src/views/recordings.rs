@@ -3,7 +3,7 @@ use crate::api;
 use crate::components::{Icon, TabError};
 use crate::i18n;
 use crate::state::{Credentials, Ctx, View};
-use crate::video::{self, EmbedKind};
+use crate::video;
 use dioxus::prelude::*;
 use oxvif::RecordingInformation;
 
@@ -226,17 +226,7 @@ fn ReplayStage(
                         }
                     }
                     div { class: "live-video-stage",
-                        match src.embed {
-                            EmbedKind::Img => rsx! {
-                                img { class: "live-video-frame", src: "{src.url}", alt: "recording replay" }
-                            },
-                            EmbedKind::Stream => rsx! {
-                                div {
-                                    class: "live-video-frame live-video-frame--stream",
-                                    dangerous_inner_html: video::stream_element_html(&src.url),
-                                }
-                            },
-                        }
+                        crate::views::live_video::VideoPlayer { source: src.clone(), locale }
                     }
                 }
             }

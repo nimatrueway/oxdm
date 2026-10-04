@@ -308,7 +308,7 @@ pub fn LiveVideoView(
                                         };
                                         let Some(backend) = backend else { return };
                                         match backend.open(&addr, &token, &creds).await {
-                                            Ok(src) => crate::views::pip::open(src, title),
+                                            Ok(src) => crate::views::pip::open(src, title, locale),
                                             Err(e) => toast_ctx.push_toast(crate::state::ToastLevel::Error, format!("{failed_label}: {e}")),
                                         }
                                     });
@@ -475,22 +475,42 @@ pub fn LiveVideoStage(
                         }
                     }
                 }
-                Some(Ok(src)) => match src.embed {
-                    EmbedKind::Img => rsx! {
-                        img {
-                            class: "live-video-frame",
-                            src: "{src.url}",
-                            alt: "live video stream"
-                        }
-                    },
-                    EmbedKind::Stream => rsx! {
-                        div {
-                            class: "live-video-frame live-video-frame--stream",
-                            dangerous_inner_html: video::stream_element_html(&src.url),
-                        }
-                    },
-                },
+                Some(Ok(src)) => rsx! { VideoPlayer { source: src.clone(), locale } },
             }
         }
+    }
+}
+
+#[component]
+pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> Element {
+    match source.embed {
+        EmbedKind::Img | EmbedKind::SoftwareMjpeg => {
+            let software = source.embed == EmbedKind::SoftwareMjpeg;
+            let (label, hint) = if software {
+                (
+                    "video_decode_software_mjpeg",
+                    "video_decode_software_mjpeg_hint",
+                )
+            } else {
+                ("video_decode_snapshots", "video_decode_snapshots_hint")
+            };
+            rsx! {
+                div { class: "live-video-frame live-video-frame--image",
+                    img { class: "live-video-frame", src: "{source.url}", alt: i18n::t(locale, "nav_live_video") }
+                    span {
+                        class: if software { "video-decode-status video-decode-status--software" } else { "video-decode-status" },
+                        role: "status",
+                        title: i18n::t(locale, hint),
+                        {i18n::t(locale, label)}
+                    }
+                }
+            }
+        }
+        EmbedKind::Stream => rsx! {
+            div {
+                class: "live-video-frame live-video-frame--stream",
+                dangerous_inner_html: video::stream_element_html(&source.url, locale),
+            }
+        },
     }
 }
