@@ -6,6 +6,32 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.7] - 2026-10-04
+
+### Added
+- Decoder-path badges for live video, snapshots, picture-in-picture, and replay,
+  with localized explanations of WebCodecs preferences and software transcoding.
+- Dismissible decoder badges that remain hidden through reconnects and
+  pause/resume for the current stream.
+- Linux fallback guidance for installing GStreamer H.264 decoders and checking
+  their availability, including the need to restart OxDM after installation.
+
+### Changed
+- Request always-on-top stacking through the native cross-platform window API
+  in theater mode and restore normal stacking on exit or when leaving the live
+  view. Some Linux compositors, including Hyprland, do not honor this request.
+- Enable runtime-detected SIMD JPEG encoding on supported CPUs while preserving
+  frame rate, resolution, quality, and color conversion.
+- Stop redundant compressed WebSocket video delivery while MJPEG fallback is
+  active, retaining audio, errors, and stream-parameter updates.
+
+### Fixed
+- Restore the MJPEG fallback image after pause/resume and ignore stale decoder
+  capability failures after teardown.
+- Wait for a keyframe when WebSocket video delivery is re-enabled.
+
+---
+
 ## [0.6.6] - 2026-10-03
 
 ### Fixed

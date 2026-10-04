@@ -399,6 +399,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "video_decode_automatic_hint" => "不支援優先使用硬體的設定。由 WebView 選擇解碼器，未確認是否使用硬體加速。",
         "video_decode_software_mjpeg" => "軟體 H.264 → MJPEG",
         "video_decode_software_mjpeg_hint" => "OxDM 使用 CPU 解碼 H.264 並重新編碼為 JPEG。此備援模式可能消耗大量 CPU。請嘗試較低解析度的攝影機設定檔。",
+        "video_decode_linux_hint" => "Linux：即使 GPU 支援解碼，缺少 GStreamer H.264 解碼器仍可能導致此備援模式。\nArch：sudo pacman -S gst-plugin-va gst-libav\nDebian/Ubuntu：sudo apt install gstreamer1.0-plugins-bad gstreamer1.0-libav\n請確認已安裝相容的 VA-API 驅動程式，然後重新啟動 OxDM。可用 gst-inspect-1.0 vah264dec 檢查硬體解碼器，或 gst-inspect-1.0 avdec_h264 檢查軟體解碼器。解碼器名稱依發行版與版本而異；可用並不代表實際使用 GPU。",
+        "video_decode_dismiss" => "隱藏解碼器標籤",
         "video_decode_snapshots" => "攝影機快照",
         "video_decode_snapshots_hint" => "從攝影機取得 JPEG 快照。OxDM 不會對 RTSP 影像進行轉碼。",
         "live_video_no_profile" => "未選取影像串流。",

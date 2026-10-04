@@ -399,6 +399,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "video_decode_automatic_hint" => "Конфигурация с приоритетом аппаратного декодера не поддерживается. WebView выбирает декодер; аппаратное ускорение не подтверждено.",
         "video_decode_software_mjpeg" => "Программный H.264 → MJPEG",
         "video_decode_software_mjpeg_hint" => "OxDM декодирует H.264 и перекодирует в JPEG на CPU. Этот резервный режим может сильно нагружать CPU. Попробуйте профиль камеры с меньшим разрешением.",
+        "video_decode_linux_hint" => "Linux: отсутствие декодеров H.264 в GStreamer может вызвать этот режим даже при наличии подходящего GPU.\nArch: sudo pacman -S gst-plugin-va gst-libav\nDebian/Ubuntu: sudo apt install gstreamer1.0-plugins-bad gstreamer1.0-libav\nУстановите совместимый драйвер VA-API и перезапустите OxDM. Проверка: gst-inspect-1.0 vah264dec (аппаратный) или gst-inspect-1.0 avdec_h264 (программный). Имена декодеров зависят от дистрибутива и версии; доступность не подтверждает использование GPU.",
+        "video_decode_dismiss" => "Скрыть индикатор декодера",
         "video_decode_snapshots" => "Снимки с камеры",
         "video_decode_snapshots_hint" => "JPEG-снимки загружаются с камеры. OxDM не перекодирует RTSP-видео.",
         "live_video_no_profile" => "Видеопоток не выбран.",

@@ -7,7 +7,7 @@ on the [`oxvif`](https://github.com/smiti1642/oxvif) ONVIF client library.
 
 ![OxDM managing an ONVIF camera — device list, profile panel, and the device identification settings tab](https://raw.githubusercontent.com/smiti1642/oxdm/main/docs/screenshot.png)
 
-> **Project status — pre-release (v0.6.6).** Built on oxvif 0.16.0. Core device management works
+> **Project status — pre-release (v0.6.7).** Built on oxvif 0.16.0. Core device management works
 > end-to-end against real cameras and the `oxvif` mock server. Release bundles
 > are not yet code-signed, so the operating system may warn about an
 > unidentified developer on first launch.
@@ -67,8 +67,8 @@ Download the `.pkg.tar.zst` package and its `.sha256` file from
 and install them from the download directory:
 
 ```sh
-sha256sum -c oxdm-0.6.6-1-x86_64.pkg.tar.zst.sha256
-sudo pacman -U ./oxdm-0.6.6-1-x86_64.pkg.tar.zst
+sha256sum -c oxdm-0.6.7-1-x86_64.pkg.tar.zst.sha256
+sudo pacman -U ./oxdm-0.6.7-1-x86_64.pkg.tar.zst
 ```
 
 Pacman installs the required system libraries, desktop launcher, and icons.
@@ -129,6 +129,37 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
 The equivalent Fedora packages are `webkit2gtk4.1-devel`, `gtk3-devel`,
 `libayatana-appindicator-gtk3-devel`, and `libxdo-devel`.
 
+### Linux video decoders
+
+WebKitGTK uses GStreamer for WebCodecs decoding. A capable GPU and its graphics
+driver alone are not enough: GStreamer also needs an H.264 decoder plugin.
+If the player shows **Software H.264 → MJPEG**, hover over its badge for setup
+guidance. Missing codecs are one possible cause; unsupported WebKit versions
+or stream configurations can also trigger the fallback.
+
+Arch Linux:
+
+```sh
+sudo pacman -S gst-plugin-va gst-libav
+```
+
+Debian/Ubuntu:
+
+```sh
+sudo apt install gstreamer1.0-plugins-bad gstreamer1.0-libav
+```
+
+Hardware decoding also requires a compatible VA-API driver for your GPU.
+Check `gst-inspect-1.0 vah264dec` for a hardware decoder and
+`gst-inspect-1.0 avdec_h264` for a software decoder. Hardware element names vary
+with distribution, GStreamer version, and GPU (older setups may use
+`vaapih264dec`). The software decoder can avoid JPEG transcoding even when GPU
+decoding is unavailable.
+
+**Restart OxDM after installing codecs or drivers.** The badge should switch
+to WebCodecs when the stream configuration is supported. “Hardware preferred”
+means acceleration was requested, not verified GPU utilization.
+
 ### Hyprland window chrome
 
 On Linux, OxDM detects Hyprland through `HYPRLAND_INSTANCE_SIGNATURE` or a
@@ -178,14 +209,23 @@ Picture-in-picture remains frameless as before.
   unavailable. No sidecar binaries or ffmpeg required. Pinch the trackpad to
   zoom the picture digitally (up to 8×); two-finger scroll pans while zoomed.
   If the camera refuses or drops the stream, the player shows its error.
-  An always-visible playback badge identifies camera snapshots, WebCodecs
+  An on-video playback badge identifies camera snapshots, WebCodecs
   (hardware preferred or automatic decoder), or software H.264 → MJPEG
   transcoding. Hover over it for details; the software fallback is highlighted
   because it can be CPU-intensive. “Hardware preferred” is a request, not
   confirmation that the GPU is decoding: WebCodecs does not report that.
   The badge also appears in PiP and recording replay.
+  Its close button hides it for the current stream, including reconnects and
+  pause/resume; opening another stream shows it again. On Linux, the software
+  fallback tooltip includes GStreamer install and verification guidance.
   Player status transition tests run with `node --test tests/oxdm_stream.test.cjs`
   (Node.js, no npm dependencies), alongside the Rust `cargo test` suite.
+  The software fallback uses runtime-detected JPEG SIMD acceleration on supported
+  x86 CPUs and stops redundant WebSocket video delivery while retaining audio
+  and stream status. Resolution, frame rate, and RGB color conversion are
+  unchanged. Measure conversion plus JPEG encoding with
+  `cargo test --release --bin oxdm benchmark_fallback_jpeg_encoding -- --ignored --nocapture`;
+  this synthetic 1080p benchmark excludes H.264 decoding and WebKit rendering.
   RTSP audio stays available when video uses the MJPEG fallback; playback starts
   muted, and the Unmute button enables audio for streams that provide it.
   Linux WebKit audio requires GStreamer's good plugins (`gst-plugins-good` on
@@ -196,7 +236,10 @@ Picture-in-picture remains frameless as before.
   restarting playback. Hover over the video to reveal the top-right exit button
   and restore the previous layout. This does not change OS fullscreen state.
   Theater mode allows resizing down to 320×180; exiting restores the normal
-  900×500 workspace minimum.
+  900×500 workspace minimum. Theater mode requests always-on-top stacking
+  through the native cross-platform window API; exiting theater or leaving
+  the live view restores normal stacking. Support depends on the window
+  manager: some Linux compositors, including Hyprland, ignore this request.
 - **Compact live toolbar** — Snapshot, Record, and Theater stay visible.
   The More options (⋯) menu holds PiP, Recordings, Camera settings, and the
   RTSP / Snapshot playback choice. Click outside the menu or press Escape

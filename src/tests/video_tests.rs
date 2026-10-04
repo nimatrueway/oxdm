@@ -32,5 +32,32 @@ fn stream_markup_escapes_urls_and_localizes_decode_status() {
             assert_eq!(labels[path]["label"], i18n::t(locale, key));
             assert!(!labels[path]["title"].as_str().unwrap().is_empty());
         }
+        assert_eq!(labels["dismiss"], i18n::t(locale, "video_decode_dismiss"));
+        assert_eq!(
+            labels["software-mjpeg"]["title"],
+            crate::video::software_decode_hint(locale)
+        );
+    }
+}
+
+#[test]
+fn software_decode_guidance_is_localized_and_platform_specific() {
+    for locale in [Locale::En, Locale::ZhTw, Locale::Ru] {
+        let hint = crate::video::software_decode_hint(locale);
+        assert!(hint.starts_with(i18n::t(locale, "video_decode_software_mjpeg_hint")));
+        #[cfg(target_os = "linux")]
+        {
+            assert!(hint.ends_with(i18n::t(locale, "video_decode_linux_hint")));
+            for command in [
+                "sudo pacman -S gst-plugin-va gst-libav",
+                "sudo apt install gstreamer1.0-plugins-bad gstreamer1.0-libav",
+                "gst-inspect-1.0 vah264dec",
+                "gst-inspect-1.0 avdec_h264",
+            ] {
+                assert!(hint.contains(command), "{locale:?}: {command}");
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(hint, i18n::t(locale, "video_decode_software_mjpeg_hint"));
     }
 }

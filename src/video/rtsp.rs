@@ -18,6 +18,8 @@
 //!   1 = audio (interleaved s16 LE PCM, already decoded here).
 //! * Client → server text: `{"type":"audio","enabled":bool}`. Audio frames
 //!   are not sent until asked for; the stage opens muted.
+//! * Client → server text: `{"type":"video","enabled":bool}`. Video starts
+//!   enabled; MJPEG fallback disables its redundant WebSocket video feed.
 //!
 //! ## Fallback (`/mjpeg/{id}`)
 //!
@@ -580,6 +582,7 @@ pub async fn serve_ws(mut ws: WebSocketStream<TcpStream>, id: &str) -> Result<()
     info!(id, "ws consumer sent init");
 
     let mut audio_enabled = false;
+    let mut video_enabled = true;
     // Decoders must start on a key frame; also true after a lag or a
     // parameter change.
     let mut want_key = true;
@@ -589,8 +592,14 @@ pub async fn serve_ws(mut ws: WebSocketStream<TcpStream>, id: &str) -> Result<()
             msg = ws.next() => match msg {
                 Some(Ok(Message::Text(t))) => {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
-                        if v.get("type").and_then(|t| t.as_str()) == Some("audio") {
-                            audio_enabled = v.get("enabled").and_then(|b| b.as_bool()).unwrap_or(false);
+                        let enabled = v.get("enabled").and_then(|b| b.as_bool());
+                        match (v.get("type").and_then(|t| t.as_str()), enabled) {
+                            (Some("audio"), _) => audio_enabled = enabled.unwrap_or(false),
+                            (Some("video"), Some(enabled)) => {
+                                if enabled && !video_enabled { want_key = true; }
+                                video_enabled = enabled;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -602,6 +611,7 @@ pub async fn serve_ws(mut ws: WebSocketStream<TcpStream>, id: &str) -> Result<()
                 Ok(f) => {
                     match &*f {
                         MediaFrame::Video { key, .. } => {
+                            if !video_enabled { continue; }
                             if want_key && !key { continue; }
                             want_key = false;
                         }
@@ -1179,6 +1189,10 @@ fn host_only_from_addr(addr: &str) -> Option<String> {
             .to_string(),
     )
 }
+
+#[cfg(test)]
+#[path = "../tests/rtsp_fallback_tests.rs"]
+mod fallback_tests;
 
 #[cfg(test)]
 mod tests {

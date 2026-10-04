@@ -68,3 +68,34 @@ fn leaving_theater_restores_only_dimensions_below_the_layout_minimum() {
         );
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires a display and window manager honoring native always-on-top requests"]
+fn theater_window_updates_native_stacking_on_enter_and_exit() {
+    use dioxus::desktop::tao::{
+        event_loop::{ControlFlow, EventLoopBuilder},
+        platform::{run_return::EventLoopExtRunReturn, unix::EventLoopBuilderExtUnix},
+    };
+    use std::time::{Duration, Instant};
+
+    let mut builder = EventLoopBuilder::<()>::new();
+    builder.with_any_thread(true);
+    let mut events = builder.build();
+    let window = crate::main_window_builder(false)
+        .with_title("OxDM theater stacking test")
+        .build(&events)
+        .unwrap();
+    for theater in [false, true, false] {
+        crate::set_main_window_theater(&window, theater);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        events.run_return(|_, _, flow| {
+            *flow = if window.is_always_on_top() == theater || Instant::now() >= deadline {
+                ControlFlow::Exit
+            } else {
+                ControlFlow::WaitUntil(deadline)
+            };
+        });
+        assert_eq!(window.is_always_on_top(), theater);
+    }
+}

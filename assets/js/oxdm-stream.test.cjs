@@ -14,8 +14,23 @@ class Element {
     appendChild(child) { return child; }
     replaceWith() {}
     getContext() { return {}; }
+    setAttribute() {}
     addEventListener(name, handler) { this.listeners.set(name, handler); }
-    getAttribute() { return 'ws://127.0.0.1:1234/ws/test'; }
+    getAttribute(name) {
+        if (name === 'data-labels') {
+            return JSON.stringify({
+                waiting: { label: 'Waiting', title: 'Waiting' },
+                paused: { label: 'Paused', title: 'Paused' },
+                'software-mjpeg': { label: 'Software MJPEG', title: 'Software MJPEG' },
+                dismiss: 'Hide decoder badge',
+            });
+        }
+        return 'ws://127.0.0.1:1234/ws/test';
+    }
+}
+
+function lastAudioPreference(sent) {
+    return sent.filter(message => message.type === 'audio').at(-1);
 }
 
 function playerFor(audio) {
@@ -63,12 +78,12 @@ test('MJPEG video fallback keeps advertised WebSocket audio available and muted 
     assert.equal(player.muted, true);
     assert.equal(player.muteBtn.disabled, false);
     assert.equal(player.muteBtn.title, 'Unmute');
-    assert.deepEqual(sent.at(-1), { type: 'audio', enabled: false });
+    assert.deepEqual(lastAudioPreference(sent), { type: 'audio', enabled: false });
 
     player.muteBtn.listeners.get('click')();
     assert.equal(player.muted, false);
     assert.equal(player.muteBtn.title, 'Mute');
-    assert.deepEqual(sent.at(-1), { type: 'audio', enabled: true });
+    assert.deepEqual(lastAudioPreference(sent), { type: 'audio', enabled: true });
     const frame = new ArrayBuffer(14);
     new DataView(frame).setUint8(0, 1);
     player.onFrame(frame);
@@ -76,7 +91,7 @@ test('MJPEG video fallback keeps advertised WebSocket audio available and muted 
 
     player.muteBtn.listeners.get('click')();
     assert.equal(player.muted, true);
-    assert.deepEqual(sent.at(-1), { type: 'audio', enabled: false });
+    assert.deepEqual(lastAudioPreference(sent), { type: 'audio', enabled: false });
     player.onFrame(frame);
     assert.equal(scheduled.length, 1);
 });
@@ -84,7 +99,7 @@ test('MJPEG video fallback keeps advertised WebSocket audio available and muted 
 test('streams without audio keep the mute control disabled', () => {
     const { player, sent } = playerFor(null);
     assert.equal(player.muteBtn.disabled, true);
-    assert.deepEqual(sent.at(-1), { type: 'audio', enabled: false });
+    assert.deepEqual(lastAudioPreference(sent), { type: 'audio', enabled: false });
 });
 
 test('a new init on the MJPEG fallback refreshes audio availability and preference', () => {
@@ -92,8 +107,8 @@ test('a new init on the MJPEG fallback refreshes audio availability and preferen
     player.muteBtn.listeners.get('click')();
     player.onInit({ type: 'init', audio: null });
     assert.equal(player.muteBtn.disabled, true);
-    assert.deepEqual(sent.at(-1), { type: 'audio', enabled: false });
+    assert.deepEqual(lastAudioPreference(sent), { type: 'audio', enabled: false });
     player.onInit({ type: 'init', audio: { channels: 1, sample_rate: 8000 } });
     assert.equal(player.muteBtn.disabled, false);
-    assert.deepEqual(sent.at(-1), { type: 'audio', enabled: true });
+    assert.deepEqual(lastAudioPreference(sent), { type: 'audio', enabled: true });
 });

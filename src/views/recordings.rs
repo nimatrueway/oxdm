@@ -226,7 +226,7 @@ fn ReplayStage(
                         }
                     }
                     div { class: "live-video-stage",
-                        crate::views::live_video::VideoPlayer { source: src.clone(), locale }
+                        crate::views::live_video::VideoPlayer { key: "{src.id}", source: src.clone(), locale }
                     }
                 }
             }

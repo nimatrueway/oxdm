@@ -149,6 +149,7 @@ pub(crate) fn set_main_window_theater(
     window: &dioxus::desktop::tao::window::Window,
     theater: bool,
 ) {
+    window.set_always_on_top(theater);
     window.set_min_inner_size(Some(main_window_min_size(theater)));
     if !theater {
         let size = window.inner_size().to_logical::<f64>(window.scale_factor());

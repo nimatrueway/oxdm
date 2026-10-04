@@ -63,14 +63,30 @@ pub fn stream_element_html(url: &str, locale: Locale) -> String {
         },
         "software-mjpeg": {
             "label": crate::i18n::t(locale, "video_decode_software_mjpeg"),
-            "title": crate::i18n::t(locale, "video_decode_software_mjpeg_hint"),
+            "title": software_decode_hint(locale),
         },
+        "dismiss": crate::i18n::t(locale, "video_decode_dismiss"),
     });
     format!(
         "<oxdm-stream src=\"{}\" data-labels=\"{}\"></oxdm-stream>",
         escape_attribute(url),
         escape_attribute(&labels.to_string())
     )
+}
+
+pub fn software_decode_hint(locale: Locale) -> String {
+    let hint = crate::i18n::t(locale, "video_decode_software_mjpeg_hint");
+    #[cfg(target_os = "linux")]
+    {
+        format!(
+            "{hint}\n\n{}",
+            crate::i18n::t(locale, "video_decode_linux_hint")
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        hint.to_string()
+    }
 }
 
 fn escape_attribute(value: &str) -> String {

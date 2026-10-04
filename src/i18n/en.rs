@@ -400,6 +400,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "video_decode_automatic_hint" => "The hardware-preferred configuration was unsupported. The WebView chooses the decoder; hardware acceleration is not verified.",
         "video_decode_software_mjpeg" => "Software H.264 → MJPEG",
         "video_decode_software_mjpeg_hint" => "OxDM decodes H.264 and re-encodes it as JPEG on the CPU. This fallback can use significant CPU. Try a lower-resolution camera profile.",
+        "video_decode_linux_hint" => "Linux: missing GStreamer H.264 decoders can cause this fallback even with a capable GPU.\nArch: sudo pacman -S gst-plugin-va gst-libav\nDebian/Ubuntu: sudo apt install gstreamer1.0-plugins-bad gstreamer1.0-libav\nEnsure a compatible VA-API driver is installed, then restart OxDM. Check gst-inspect-1.0 vah264dec (hardware) or gst-inspect-1.0 avdec_h264 (software). Decoder names vary by distribution and version; availability does not prove GPU use.",
+        "video_decode_dismiss" => "Hide decoder badge",
         "video_decode_snapshots" => "Camera snapshots",
         "video_decode_snapshots_hint" => "JPEG snapshots are fetched from the camera. OxDM is not transcoding RTSP video.",
         "live_video_no_profile" => "No video stream selected.",

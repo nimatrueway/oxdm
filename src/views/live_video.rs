@@ -475,7 +475,7 @@ pub fn LiveVideoStage(
                         }
                     }
                 }
-                Some(Ok(src)) => rsx! { VideoPlayer { source: src.clone(), locale } },
+                Some(Ok(src)) => rsx! { VideoPlayer { key: "{src.id}", source: src.clone(), locale } },
             }
         }
     }
@@ -483,6 +483,7 @@ pub fn LiveVideoStage(
 
 #[component]
 pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> Element {
+    let mut badge_dismissed = use_signal(|| false);
     match source.embed {
         EmbedKind::Img | EmbedKind::SoftwareMjpeg => {
             let software = source.embed == EmbedKind::SoftwareMjpeg;
@@ -494,14 +495,35 @@ pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> 
             } else {
                 ("video_decode_snapshots", "video_decode_snapshots_hint")
             };
+            let hint = if software {
+                video::software_decode_hint(locale)
+            } else {
+                i18n::t(locale, hint).to_string()
+            };
             rsx! {
                 div { class: "live-video-frame live-video-frame--image",
                     img { class: "live-video-frame", src: "{source.url}", alt: i18n::t(locale, "nav_live_video") }
-                    span {
-                        class: if software { "video-decode-status video-decode-status--software" } else { "video-decode-status" },
-                        role: "status",
-                        title: i18n::t(locale, hint),
-                        {i18n::t(locale, label)}
+                    if !*badge_dismissed.read() {
+                        div {
+                            class: if software { "video-decode-status video-decode-status--software" } else { "video-decode-status" },
+                            span {
+                                role: "status",
+                                title: "{hint}",
+                                {i18n::t(locale, label)}
+                            }
+                            button {
+                                class: "video-decode-dismiss",
+                                r#type: "button",
+                                title: i18n::t(locale, "video_decode_dismiss"),
+                                aria_label: i18n::t(locale, "video_decode_dismiss"),
+                                onmousedown: move |event| event.stop_propagation(),
+                                onclick: move |event| {
+                                    event.stop_propagation();
+                                    badge_dismissed.set(true);
+                                },
+                                Icon { name: "x", size: 12 }
+                            }
+                        }
                     }
                 }
             }
