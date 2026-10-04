@@ -218,6 +218,7 @@ fn App() -> Element {
         keyboard_action: use_signal(|| None),
         log_to_file: use_signal(|| cfg.log_to_file),
         tls_strict: use_signal(|| cfg.tls_strict),
+        show_video_details: use_signal(|| cfg.show_video_details),
         snapshot_dir: use_signal(|| cfg.snapshot_dir.clone()),
         recording_dir: use_signal(|| cfg.recording_dir.clone()),
         camera_item_size: use_signal(|| cfg.camera_item_size()),
@@ -228,6 +229,9 @@ fn App() -> Element {
     // Seed the TLS-strict atomic from config so the first snapshot fetch
     // after launch already honours the saved preference.
     api::set_tls_strict(cfg.tls_strict);
+    use_hook(|| {
+        video::SHOW_VIDEO_DETAILS.send_replace(cfg.show_video_details);
+    });
     use_context_provider(|| ctx);
 
     // One keychain read for every credential. On macOS it blocks until the
@@ -263,17 +267,20 @@ fn App() -> Element {
         let locale = *ctx.locale.read();
         let log_to_file = *ctx.log_to_file.read();
         let tls_strict = *ctx.tls_strict.read();
+        let show_video_details = *ctx.show_video_details.read();
         let snapshot_dir = ctx.snapshot_dir.read().clone();
         let recording_dir = ctx.recording_dir.read().clone();
         let camera_item_size = *ctx.camera_item_size.read();
         let sidebar_collapsed = *ctx.sidebar_collapsed.read();
         let ptz_speed = *ctx.ptz_speed.read();
         api::set_tls_strict(tls_strict);
+        video::SHOW_VIDEO_DETAILS.send_replace(show_video_details);
         persist::save_config(persist::ConfigOut {
             theme: persist::theme_to_str(theme).to_string(),
             locale: persist::locale_to_str(locale).to_string(),
             log_to_file,
             tls_strict,
+            show_video_details,
             snapshot_dir,
             recording_dir,
             camera_item_size,

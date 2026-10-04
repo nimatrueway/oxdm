@@ -158,6 +158,29 @@ fn sidebar_collapse_defaults_to_expanded() {
 }
 
 #[test]
+fn video_details_default_off_and_survive_settings_backup() {
+    assert!(!crate::persist::ConfigFile::default().show_video_details);
+    for encoded in ["", "theme = 'light'"] {
+        let config: crate::persist::ConfigFile = toml::from_str(encoded).unwrap();
+        assert!(!config.show_video_details);
+    }
+    let mut backup = settings_backup_fixture(false);
+    backup.preferences.show_video_details = true;
+    let encoded = crate::persist::encode_settings_backup(&backup).unwrap();
+    let restored = crate::persist::decode_settings_backup(&encoded).unwrap();
+    assert!(restored.preferences.show_video_details);
+
+    let mut legacy = serde_json::to_value(backup).unwrap();
+    legacy["preferences"]
+        .as_object_mut()
+        .unwrap()
+        .remove("show_video_details");
+    let restored =
+        crate::persist::decode_settings_backup(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(!restored.preferences.show_video_details);
+}
+
+#[test]
 fn saved_preferences_round_trip_without_credentials() {
     for sidebar_collapsed in [true, false] {
         let config = crate::persist::ConfigOut {
@@ -165,6 +188,7 @@ fn saved_preferences_round_trip_without_credentials() {
             locale: "ru".to_string(),
             log_to_file: true,
             tls_strict: true,
+            show_video_details: sidebar_collapsed,
             snapshot_dir: None,
             recording_dir: None,
             camera_item_size: 96,
@@ -179,6 +203,7 @@ fn saved_preferences_round_trip_without_credentials() {
         assert!(!saved.contains_key("recording_dir"));
         let restored: crate::persist::ConfigFile = toml::from_str(&encoded).unwrap();
         assert_eq!(restored.sidebar_collapsed, sidebar_collapsed);
+        assert_eq!(restored.show_video_details, sidebar_collapsed);
         assert_eq!(restored.ptz_speed(), 0.65);
         assert_eq!(restored.theme, "light");
         assert_eq!(restored.locale, "ru");
@@ -372,6 +397,7 @@ fn settings_backup_fixture(include_credentials: bool) -> crate::persist::Setting
             locale: "en".into(),
             log_to_file: false,
             tls_strict: true,
+            show_video_details: false,
             snapshot_dir: None,
             recording_dir: None,
             camera_item_size: 80,

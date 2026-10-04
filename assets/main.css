@@ -2524,7 +2524,7 @@ iframe.live-video-frame {
   left: 10px;
   z-index: 2;
   max-width: calc(100% - 60px);
-  display: flex;
+  display: none;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
@@ -2535,24 +2535,8 @@ iframe.live-video-frame {
   font-size: 11px;
   line-height: 1.4;
 }
-.video-decode-status[hidden] { display: none; }
+.live-video-frame[data-video-details="true"] .video-decode-status { display: flex; }
 .video-decode-status > span { min-width: 0; }
-.video-decode-dismiss {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-.video-decode-dismiss:hover { background: rgba(255,255,255,0.15); }
-.video-decode-dismiss:focus-visible { outline: 2px solid currentColor; }
 .video-decode-status--software {
   border-color: #f9e2af;
   color: #f9e2af;

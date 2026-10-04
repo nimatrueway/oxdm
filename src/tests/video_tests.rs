@@ -2,6 +2,71 @@ use crate::i18n;
 use crate::state::Locale;
 use crate::video::stream_element_html;
 
+#[tokio::test]
+async fn video_details_update_independent_windows_without_replacing_players() {
+    use crate::video::{EmbedKind, VideoSource, SHOW_VIDEO_DETAILS};
+    use crate::views::live_video::{VideoPlayer, VideoPlayerProps};
+    use dioxus::dioxus_core::{AttributeValue, Mutation, Mutations, VirtualDom};
+
+    fn details(mutations: &Mutations) -> Option<&str> {
+        mutations.edits.iter().find_map(|edit| match edit {
+            Mutation::SetAttribute {
+                name: "data-video-details",
+                value: AttributeValue::Text(value),
+                ..
+            } => Some(value.as_str()),
+            _ => None,
+        })
+    }
+
+    async fn wait_for_details(dom: &mut VirtualDom, expected: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                dom.wait_for_work().await;
+                let mutations = dom.render_immediate_to_vec();
+                assert!(mutations.edits.iter().all(|edit| matches!(
+                    edit,
+                    Mutation::SetAttribute {
+                        name: "data-video-details",
+                        ..
+                    }
+                )));
+                if details(&mutations) == Some(expected) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("video-details preference did not reach the player");
+    }
+
+    SHOW_VIDEO_DETAILS.send_replace(false);
+    let mut windows: Vec<_> = [EmbedKind::Stream, EmbedKind::Img, EmbedKind::SoftwareMjpeg]
+        .into_iter()
+        .map(|embed| {
+            let mut dom = VirtualDom::new_with_props(
+                VideoPlayer,
+                VideoPlayerProps {
+                    source: VideoSource {
+                        id: "test".into(),
+                        url: "http://127.0.0.1/test".into(),
+                        embed,
+                    },
+                    locale: Locale::En,
+                },
+            );
+            assert_eq!(details(&dom.rebuild_to_vec()), Some("false"));
+            dom
+        })
+        .collect();
+    for enabled in [true, false] {
+        SHOW_VIDEO_DETAILS.send_replace(enabled);
+        for dom in &mut windows {
+            wait_for_details(dom, if enabled { "true" } else { "false" }).await;
+        }
+    }
+}
+
 #[test]
 fn stream_markup_selects_configured_renderer() {
     let expected = match std::env::var("OXDM_VIDEO_RENDERER") {
@@ -43,7 +108,7 @@ fn stream_markup_escapes_urls_and_localizes_decode_status() {
             assert_eq!(labels[path]["label"], i18n::t(locale, key));
             assert!(!labels[path]["title"].as_str().unwrap().is_empty());
         }
-        assert_eq!(labels["dismiss"], i18n::t(locale, "video_decode_dismiss"));
+        assert!(labels.get("dismiss").is_none());
         assert_eq!(
             labels["software-mjpeg"]["title"],
             crate::video::software_decode_hint(locale)

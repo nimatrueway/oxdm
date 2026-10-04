@@ -18,11 +18,15 @@
 //! its [`EmbedKind`].
 
 use crate::state::{Credentials, Locale};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 pub mod mjpeg;
 pub mod mkv;
 pub mod rtsp;
+
+// PiP has its own VirtualDom, so use a watch channel rather than a main-window signal.
+pub(crate) static SHOW_VIDEO_DETAILS: LazyLock<tokio::sync::watch::Sender<bool>> =
+    LazyLock::new(|| tokio::sync::watch::channel(false).0);
 
 /// How a frontend should embed a [`VideoSource::url`].
 ///
@@ -74,7 +78,6 @@ pub fn stream_element_html(url: &str, locale: Locale) -> String {
             "label": crate::i18n::t(locale, "video_decode_software_mjpeg"),
             "title": software_decode_hint(locale),
         },
-        "dismiss": crate::i18n::t(locale, "video_decode_dismiss"),
     });
     format!(
         "<oxdm-stream src=\"{}\" data-renderer=\"{renderer}\" data-labels=\"{}\"></oxdm-stream>",

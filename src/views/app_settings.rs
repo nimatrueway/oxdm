@@ -91,6 +91,18 @@ pub fn AppSettingsView() -> Element {
                     }
                 }
                 section { class: "app-settings-section",
+                    h2 { {i18n::t(locale, "nav_live_video")} }
+                    label { class: "app-settings-check",
+                        input {
+                            r#type: "checkbox",
+                            checked: *ctx.show_video_details.read(),
+                            onchange: move |event: Event<FormData>| ctx.show_video_details.clone().set(event.checked()),
+                        }
+                        span { {i18n::t(locale, "app_settings_video_details")} }
+                    }
+                    p { class: "app-settings-note", {i18n::t(locale, "app_settings_video_details_hint")} }
+                }
+                section { class: "app-settings-section",
                     h2 { {i18n::t(locale, "app_settings_storage")} }
                     for (mut directory, path, label) in folders {
                         div { class: "app-settings-folder",
@@ -224,6 +236,7 @@ fn SettingsBackupSection() -> Element {
                                 locale: persist::locale_to_str(*ctx.locale.peek()).into(),
                                 log_to_file: *ctx.log_to_file.peek(),
                                 tls_strict: *ctx.tls_strict.peek(),
+                                show_video_details: *ctx.show_video_details.peek(),
                                 snapshot_dir: ctx.snapshot_dir.peek().clone(),
                                 recording_dir: ctx.recording_dir.peek().clone(),
                                 camera_item_size: *ctx.camera_item_size.peek(),
@@ -344,6 +357,7 @@ async fn apply_settings_backup(mut ctx: Ctx, backup: persist::SettingsBackup) {
         .set(persist::locale_from_str(&preferences.locale));
     ctx.log_to_file.set(preferences.log_to_file);
     ctx.tls_strict.set(preferences.tls_strict);
+    ctx.show_video_details.set(preferences.show_video_details);
     ctx.snapshot_dir.set(preferences.snapshot_dir.clone());
     ctx.recording_dir.set(preferences.recording_dir.clone());
     ctx.camera_item_size

@@ -7,7 +7,7 @@ on the [`oxvif`](https://github.com/smiti1642/oxvif) ONVIF client library.
 
 ![OxDM managing an ONVIF camera — device list, profile panel, and the device identification settings tab](https://raw.githubusercontent.com/smiti1642/oxdm/main/docs/screenshot.png)
 
-> **Project status — pre-release (v0.6.8).** Built on oxvif 0.16.0. Core device management works
+> **Project status — pre-release (v0.6.9).** Built on oxvif 0.16.0. Core device management works
 > end-to-end against real cameras and the `oxvif` mock server. Release bundles
 > are not yet code-signed, so the operating system may warn about an
 > unidentified developer on first launch.
@@ -67,8 +67,8 @@ Download the `.pkg.tar.zst` package and its `.sha256` file from
 and install them from the download directory:
 
 ```sh
-sha256sum -c oxdm-0.6.8-1-x86_64.pkg.tar.zst.sha256
-sudo pacman -U ./oxdm-0.6.8-1-x86_64.pkg.tar.zst
+sha256sum -c oxdm-0.6.9-1-x86_64.pkg.tar.zst.sha256
+sudo pacman -U ./oxdm-0.6.9-1-x86_64.pkg.tar.zst
 ```
 
 Pacman installs the required system libraries, desktop launcher, and icons.
@@ -209,14 +209,16 @@ Picture-in-picture remains frameless as before.
   unavailable. No sidecar binaries or ffmpeg required. Pinch the trackpad to
   zoom the picture digitally (up to 8×); two-finger scroll pans while zoomed.
   If the camera refuses or drops the stream, the player shows its error.
-  An on-video playback badge identifies camera snapshots, WebCodecs
+  Enable **App settings > Live video > Show video decoder details** to show
+  a playback badge identifying camera snapshots, WebCodecs
   (hardware preferred or automatic decoder), or software H.264 → MJPEG
   transcoding. Hover over it for details; the software fallback is highlighted
   because it can be CPU-intensive. “Hardware preferred” is a request, not
   confirmation that the GPU is decoding: WebCodecs does not report that.
-  The badge also appears in PiP and recording replay.
-  Its close button hides it for the current stream, including reconnects and
-  pause/resume; opening another stream shows it again. On Linux, the software
+  This saved setting is off by default and also controls PiP and recording
+  replay, including already-open PiP windows. The badge has no close button;
+  change its visibility in App settings. Playback errors remain visible
+  independently of this setting. On Linux, the software
   fallback tooltip includes GStreamer install and verification guidance.
   WebGL2 is the default renderer for WebCodecs frames, including PiP and replay.
   Set `OXDM_VIDEO_RENDERER=2d` before launching to force Canvas 2D;

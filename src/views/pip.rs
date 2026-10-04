@@ -5,6 +5,7 @@
 //! context is available here — the CSS and player script are injected
 //! again and the source URL comes in as a prop. Closing the window drops
 //! the player; the RTSP session behind it idles out on its own.
+//! The playback-details preference is shared through a process-wide watch channel.
 //!
 //! Frameless: a mousedown anywhere on the video starts a native window
 //! drag (the player's control bar swallows its own mousedowns), and a

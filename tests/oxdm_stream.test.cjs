@@ -82,7 +82,6 @@ function setup(support, { renderer, gl = null } = {}) {
         ['waiting', 'paused', 'hardware-preferred', 'automatic', 'software-mjpeg']
             .map(path => [path, { label: `localized ${path}`, title: `hint ${path}` }]),
     );
-    labels.dismiss = 'localized close';
     player.setAttribute('src', 'ws://127.0.0.1:1234/ws/test');
     player.setAttribute('data-labels', JSON.stringify(labels));
     if (renderer) player.setAttribute('data-renderer', renderer);
@@ -253,7 +252,7 @@ test('hardware-preferred WebCodecs is labeled as a preference, not verified hard
     assert.equal(player.decodeStatus.title, 'hint hardware-preferred');
     assert.equal(player.decodeStatus.getAttribute('aria-label'), 'hint hardware-preferred');
     assert.equal(player.decodeIndicator.classes.has('video-decode-status--software'), false);
-    assert.equal(player.decodeClose.getAttribute('aria-label'), 'localized close');
+    assert.deepEqual(player.decodeIndicator.children, [player.decodeStatus]);
     assert.deepEqual(player.ws.sent.find(message => message.type === 'video'), { type: 'video', enabled: true });
 });
 
@@ -304,11 +303,10 @@ test('disconnect clears WebCodecs status and language changes update the badge',
     player.isConnected = false;
     player.ws.onclose();
     assert.equal(player.decodeStatus.textContent, 'localized waiting');
-    player.setAttribute('data-labels', JSON.stringify({ waiting: { label: 'translated', title: 'translated hint' }, dismiss: 'translated close' }));
+    player.setAttribute('data-labels', JSON.stringify({ waiting: { label: 'translated', title: 'translated hint' } }));
     player.attributeChangedCallback('data-labels');
     assert.equal(player.decodeStatus.textContent, 'translated');
     assert.equal(player.decodeStatus.title, 'translated hint');
-    assert.equal(player.decodeClose.title, 'translated close');
 });
 
 test('a stale rejected capability check cannot activate fallback after teardown', async () => {
@@ -350,52 +348,40 @@ test('MJPEG fallback still requests audio when unmuted', () => {
     assert.deepEqual(player.ws.sent.filter(message => message.type === 'video').at(-1), { type: 'video', enabled: false });
 });
 
-test('closing the badge leaves decoding connected and stays closed through pause/resume', async () => {
+test('decoder details have no dismiss control through pause and resume', async () => {
     const player = setup(() => true);
     player.onInit(init);
     await settled();
-    const ws = player.ws;
-    const decoder = player.decoder;
-    let stopped = 0;
-    player.decodeClose.listeners.get('mousedown')({ stopPropagation() { stopped++; } });
-    player.decodeClose.listeners.get('click')({ stopPropagation() { stopped++; } });
-    assert.equal(stopped, 2);
-    assert.equal(player.decodeIndicator.hidden, true);
-    assert.equal(player.ws, ws);
-    assert.equal(player.decoder, decoder);
+    assert.deepEqual(player.decodeIndicator.children, [player.decodeStatus]);
     player.playBtn.listeners.get('click')();
     player.playBtn.listeners.get('click')();
     player.onInit(init);
     await settled();
-    assert.equal(player.decodeIndicator.hidden, true);
+    assert.deepEqual(player.decodeIndicator.children, [player.decodeStatus]);
     assert.equal(player.decoder.state, 'configured');
 });
 
-test('closing the fallback badge does not stop its image and survives reconnects', () => {
+test('fallback details have no dismiss control and reconnect keeps its image', () => {
     const player = setup();
     player.onInit(init);
     const imageUrl = player.img.src;
-    player.decodeClose.listeners.get('click')({ stopPropagation() {} });
-    assert.equal(player.img.src, imageUrl);
     player.teardown();
     player.connect();
     player.onInit(init);
-    assert.equal(player.decodeIndicator.hidden, true);
+    assert.deepEqual(player.decodeIndicator.children, [player.decodeStatus]);
     assert.equal(player.img.src, imageUrl);
 });
 
-test('a different stream restores the badge but status and label updates do not', () => {
+test('playback errors use a separate overlay from optional decoder details', () => {
     const player = setup();
     player.onInit(init);
-    player.decodeClose.listeners.get('click')({ stopPropagation() {} });
+    player.showError('Camera connection failed');
+    assert.equal(player.errorEl.hidden, false);
+    assert.equal(player.errorText.textContent, 'Camera connection failed');
+    assert.notEqual(player.errorEl, player.decodeIndicator);
+    assert.equal(player.decodeIndicator.children.includes(player.errorEl), false);
     player.setDecodePath('waiting');
     player.attributeChangedCallback('data-labels');
-    assert.equal(player.decodeIndicator.hidden, true);
-    const oldUrl = player.getAttribute('src');
-    player.attributeChangedCallback('src', oldUrl, oldUrl);
-    assert.equal(player.decodeIndicator.hidden, true);
-    const newUrl = 'ws://127.0.0.1:1234/ws/new';
-    player.setAttribute('src', newUrl);
-    player.attributeChangedCallback('src', oldUrl, newUrl);
-    assert.equal(player.decodeIndicator.hidden, false);
+    assert.equal(player.errorEl.hidden, false);
+    assert.equal(player.errorText.textContent, 'Camera connection failed');
 });

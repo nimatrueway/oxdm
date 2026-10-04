@@ -35,6 +35,8 @@ pub struct ConfigFile {
     #[serde(default)]
     pub tls_strict: bool,
     #[serde(default)]
+    pub show_video_details: bool,
+    #[serde(default)]
     pub snapshot_dir: Option<PathBuf>,
     #[serde(default)]
     pub recording_dir: Option<PathBuf>,
@@ -825,6 +827,8 @@ pub struct ConfigOut {
     pub locale: String,
     pub log_to_file: bool,
     pub tls_strict: bool,
+    #[serde(default)]
+    pub show_video_details: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_dir: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -104,7 +104,6 @@ class WebGlVideoRenderer {
 const svg = (body) => `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 const ICON_PLAY = svg('<polygon points="6 3 20 12 6 21 6 3"/>');
 const ICON_PAUSE = svg('<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>');
-const ICON_CLOSE = svg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
 const ICON_SOUND = svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>');
 const ICON_MUTED = svg('<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>');
 const ICON_ALERT = svg('<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>');
@@ -136,9 +135,8 @@ class OxdmStream extends HTMLElement {
         if (this.audioCtx) { this.audioCtx.close(); this.audioCtx = null; }
     }
 
-    attributeChangedCallback(name, oldValue, newValue) {
+    attributeChangedCallback(name) {
         if (name === 'src' && this.canvas) {
-            if (oldValue !== newValue) this.decodeIndicator.hidden = false;
             this.teardown();
             this.connect();
         }
@@ -157,19 +155,9 @@ class OxdmStream extends HTMLElement {
 
         this.decodeIndicator = document.createElement('div');
         this.decodeIndicator.className = 'video-decode-status';
-        this.decodeIndicator.hidden = false;
         this.decodeStatus = document.createElement('span');
         this.decodeStatus.setAttribute('role', 'status');
-        this.decodeClose = document.createElement('button');
-        this.decodeClose.type = 'button';
-        this.decodeClose.className = 'video-decode-dismiss';
-        this.decodeClose.innerHTML = ICON_CLOSE;
-        this.decodeClose.addEventListener('mousedown', event => event.stopPropagation());
-        this.decodeClose.addEventListener('click', event => {
-            event.stopPropagation();
-            this.decodeIndicator.hidden = true;
-        });
-        this.decodeIndicator.append(this.decodeStatus, this.decodeClose);
+        this.decodeIndicator.append(this.decodeStatus);
         this.appendChild(this.decodeIndicator);
 
         this.errorEl = document.createElement('div');
@@ -246,8 +234,6 @@ class OxdmStream extends HTMLElement {
         this.decodeStatus.title = status.title;
         this.decodeStatus.setAttribute('aria-label', status.title);
         this.decodeIndicator.classList.toggle('video-decode-status--software', path === 'software-mjpeg');
-        this.decodeClose.title = labels.dismiss;
-        this.decodeClose.setAttribute('aria-label', labels.dismiss);
     }
 
     // ── Connection ───────────────────────────────────────────────────────

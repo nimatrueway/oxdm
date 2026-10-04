@@ -343,6 +343,7 @@ pub struct Ctx {
     /// Toggled in the About dialog, saved to config.toml, applies
     /// immediately (next snapshot fetch reads the global atomic).
     pub tls_strict: Signal<bool>,
+    pub show_video_details: Signal<bool>,
     pub snapshot_dir: Signal<Option<PathBuf>>,
     pub recording_dir: Signal<Option<PathBuf>>,
     pub camera_item_size: Signal<u16>,

@@ -6,6 +6,19 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.9] - 2026-10-04
+
+### Changed
+- Hide decoder-details overlays by default. Enable **App settings > Live video >
+  Show video decoder details** to display them; the saved preference applies to
+  live video, snapshots, replay, and existing or newly opened PiP windows.
+- Remove the overlay's close button. Visibility is controlled only by the setting
+  and can change without replacing the video player or restarting its decoder.
+- Include the preference in settings backups; older settings and backups default
+  to hidden. Playback errors remain visible independently of decoder details.
+
+---
+
 ## [0.6.8] - 2026-10-04
 
 ### Changed

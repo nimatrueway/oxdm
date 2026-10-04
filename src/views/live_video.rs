@@ -483,7 +483,16 @@ pub fn LiveVideoStage(
 
 #[component]
 pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> Element {
-    let mut badge_dismissed = use_signal(|| false);
+    let mut show_details = use_signal(|| *video::SHOW_VIDEO_DETAILS.borrow());
+    use_future(move || async move {
+        let mut updates = video::SHOW_VIDEO_DETAILS.subscribe();
+        loop {
+            show_details.set(*updates.borrow_and_update());
+            if updates.changed().await.is_err() {
+                break;
+            }
+        }
+    });
     match source.embed {
         EmbedKind::Img | EmbedKind::SoftwareMjpeg => {
             let software = source.embed == EmbedKind::SoftwareMjpeg;
@@ -502,27 +511,14 @@ pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> 
             };
             rsx! {
                 div { class: "live-video-frame live-video-frame--image",
+                    "data-video-details": "{show_details}",
                     img { class: "live-video-frame", src: "{source.url}", alt: i18n::t(locale, "nav_live_video") }
-                    if !*badge_dismissed.read() {
-                        div {
-                            class: if software { "video-decode-status video-decode-status--software" } else { "video-decode-status" },
-                            span {
-                                role: "status",
-                                title: "{hint}",
-                                {i18n::t(locale, label)}
-                            }
-                            button {
-                                class: "video-decode-dismiss",
-                                r#type: "button",
-                                title: i18n::t(locale, "video_decode_dismiss"),
-                                aria_label: i18n::t(locale, "video_decode_dismiss"),
-                                onmousedown: move |event| event.stop_propagation(),
-                                onclick: move |event| {
-                                    event.stop_propagation();
-                                    badge_dismissed.set(true);
-                                },
-                                Icon { name: "x", size: 12 }
-                            }
+                    div {
+                        class: if software { "video-decode-status video-decode-status--software" } else { "video-decode-status" },
+                        span {
+                            role: "status",
+                            title: "{hint}",
+                            {i18n::t(locale, label)}
                         }
                     }
                 }
@@ -531,6 +527,7 @@ pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> 
         EmbedKind::Stream => rsx! {
             div {
                 class: "live-video-frame live-video-frame--stream",
+                "data-video-details": "{show_details}",
                 dangerous_inner_html: video::stream_element_html(&source.url, locale),
             }
         },
