@@ -252,6 +252,11 @@ fn App() -> Element {
                     ctx.global_credentials.clone().set(creds);
                     ctx.devices.clone().set(devices);
                     ctx.health_groups.clone().set(groups);
+                    // Loaded devices have never been probed (probes fire from
+                    // the scan loop or credential changes), so their auth
+                    // status stays Unknown and sidebar thumbnails stay hidden.
+                    // Probe them all now that credentials are available.
+                    crate::device_ops::reverify_auth(ctx, ctx.devices);
                 }
                 Err(e) => tracing::error!(error = %e, "persisted-state load task failed"),
             }

@@ -6,6 +6,26 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.10] - 2026-10-05
+
+### Fixed
+- First launch after install no longer leaves sidebar thumbnails and live video
+  dead until a restart: loaded devices are probed once credentials unlock, and
+  failed profile loads, video opens, image streams, and thumbnail refreshes
+  retry automatically.
+- Changing device credentials now applies to running RTSP streams without
+  replacing the stream or interrupting other viewers.
+- Double-clicking live video no longer forces theater mode on exit: fullscreen
+  implies theater while active, and leaving fullscreen restores the theater
+  state from before entering. The theater exit button and Escape always leave
+  theater mode.
+
+### Changed
+- Theater mode hides the window titlebar; dragging the video moves the window.
+  Double-click toggles OS fullscreen on top of theater mode.
+
+---
+
 ## [0.6.9] - 2026-10-04
 
 ### Changed

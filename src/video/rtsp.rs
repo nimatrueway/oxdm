@@ -121,7 +121,7 @@ pub struct StreamState {
     /// Latest RTSP URL for this stream; re-read on every (re)connect so a
     /// camera that mints a new URL per `GetStreamUri` doesn't fork sessions.
     url: Mutex<String>,
-    creds: Option<retina::client::Credentials>,
+    creds: Mutex<Option<retina::client::Credentials>>,
     frames: broadcast::Sender<Arc<MediaFrame>>,
     init: watch::Sender<Option<Arc<StreamInit>>>,
     /// First line of the latest failure while the session retries; cleared by PLAY.
@@ -197,6 +197,10 @@ fn registry() -> &'static Registry {
 
 impl Registry {
     fn get_or_insert(&self, id: &str, url: String, creds: &Credentials) -> Arc<StreamState> {
+        let creds = (!creds.username.is_empty()).then(|| retina::client::Credentials {
+            username: creds.username.clone(),
+            password: creds.password.clone(),
+        });
         let mut map = self.streams.lock().unwrap();
         if let Some(s) = map.get(id) {
             let mut cur = s.url.lock().unwrap();
@@ -204,19 +208,16 @@ impl Registry {
                 debug!(id, "stream URL changed; will use it on next connect");
                 *cur = url;
             }
+            *s.creds.lock().unwrap() = creds;
             return Arc::clone(s);
         }
-        let creds = (!creds.username.is_empty()).then(|| retina::client::Credentials {
-            username: creds.username.clone(),
-            password: creds.password.clone(),
-        });
         let (frames, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (init, _) = watch::channel(None);
         let (error, _) = watch::channel(None);
         let state = Arc::new(StreamState {
             id: id.to_string(),
             url: Mutex::new(url),
-            creds,
+            creds: Mutex::new(creds),
             frames,
             init,
             error,
@@ -265,7 +266,7 @@ async fn pull_once(state: &Arc<StreamState>) -> Result<(), String> {
     info!(id = %state.id, url = %url_s, "RTSP connecting");
     let url = url::Url::parse(&url_s).map_err(|e| format!("bad RTSP URL: {e}"))?;
     let opts = SessionOptions::default()
-        .creds(state.creds.clone())
+        .creds(state.creds.lock().unwrap().clone())
         .user_agent(format!("oxdm/{}", env!("CARGO_PKG_VERSION")));
     let mut session = retina::client::Session::describe(url, opts)
         .await

@@ -73,13 +73,28 @@ pub fn LiveVideoView(
     let locale = *ctx.locale.read();
     let mode = use_signal(LiveVideoMode::default);
     let mut theater = use_signal(|| false);
+    let mut pre_fullscreen_theater = use_signal(|| false);
+    let mut drag_anchor = use_signal(|| None::<(f64, f64, f64, f64)>);
     let mut menu_open = use_signal(|| false);
     let window = use_hook(dioxus::desktop::window);
+    let drag_window = window.clone();
+    let decorations = use_hook(|| window.window.is_decorated());
     let theater_window = window.clone();
     use_effect(move || {
-        crate::set_main_window_theater(&theater_window.window, *theater.read());
+        let active = *theater.read();
+        theater_window
+            .window
+            .set_decorations(decorations && !active);
+        crate::set_main_window_theater(&theater_window.window, active);
     });
-    use_drop(move || crate::set_main_window_theater(&window.window, false));
+    let drop_window = window.clone();
+    use_drop(move || {
+        if *theater.peek() {
+            drop_window.set_fullscreen(false);
+        }
+        drop_window.window.set_decorations(decorations);
+        crate::set_main_window_theater(&drop_window.window, false);
+    });
     let ptz_speed = ctx.ptz_speed;
     let pan_preview = use_signal(PanPreview::default);
     let profile_sig = ctx.selected_profile;
@@ -136,6 +151,17 @@ pub fn LiveVideoView(
     rsx! {
         div {
             class: if theater_open { "live-video-view live-video-view--theater" } else { "live-video-view" },
+            tabindex: "0",
+            onkeydown: move |event| {
+                if event.key() == dioxus::html::input_data::keyboard_types::Key::Escape && theater() {
+                    event.stop_propagation();
+                    dioxus::desktop::window().set_fullscreen(false);
+                    theater.set(*pre_fullscreen_theater.peek());
+                    // Consume the saved state so a later Escape (plain
+                    // theater, no fullscreen) exits instead of restoring.
+                    pre_fullscreen_theater.set(false);
+                }
+            },
             div { class: "content-header live-toolbar",
                 ProfileSelector { addr, creds }
                 for (target, available, icon, label) in [
@@ -331,6 +357,35 @@ pub fn LiveVideoView(
 
             div { class: if controls_open { "live-workbench live-workbench--controls" } else { "live-workbench" },
                 div { class: "live-feed",
+                    ondoubleclick: move |_| {
+                        // Fullscreen implies theater; exiting restores the
+                        // theater state from before fullscreen.
+                        let window = dioxus::desktop::window();
+                        if window.window.fullscreen().is_none() {
+                            pre_fullscreen_theater.set(theater());
+                            theater.set(true);
+                            window.set_fullscreen(true);
+                        } else {
+                            window.set_fullscreen(false);
+                            theater.set(*pre_fullscreen_theater.peek());
+                            pre_fullscreen_theater.set(false);
+                        }
+                    },
+                    onmousedown: move |event| {
+                        if !theater() || window.window.fullscreen().is_some() {
+                            return;
+                        }
+                        let c = event.data().screen_coordinates();
+                        let Ok(pos) = window.window.outer_position() else { return };
+                        let pos = pos.to_logical(window.window.scale_factor());
+                        drag_anchor.set(Some((c.x, c.y, pos.x, pos.y)));
+                    },
+                    onmousemove: move |event| {
+                        let Some((ax, ay, wx, wy)) = *drag_anchor.peek() else { return };
+                        let c = event.data().screen_coordinates();
+                        drag_window.window.set_outer_position(dioxus::desktop::LogicalPosition::new(wx + c.x - ax, wy + c.y - ay));
+                    },
+                    onmouseup: move |_| drag_anchor.set(None),
                     LiveVideoStage {
                         addr,
                         creds,
@@ -361,7 +416,14 @@ pub fn LiveVideoView(
                         class: "theater-exit",
                         title: i18n::t(locale, "theater_exit"),
                         aria_label: i18n::t(locale, "theater_exit"),
-                        onclick: move |_| theater.set(false),
+                        // This button's job is to leave theater — always.
+                        // (Restoring pre_fullscreen_theater here made it a
+                        // no-op whenever fullscreen was entered from
+                        // theater.)
+                        onclick: move |_| {
+                            dioxus::desktop::window().set_fullscreen(false);
+                            theater.set(false);
+                        },
                         Icon { name: "minimize", size: 16 }
                     }
                 }
@@ -423,7 +485,7 @@ pub fn LiveVideoStage(
     let locale = *ctx.locale.read();
     let profile_sig = ctx.selected_profile;
 
-    let source = use_resource(move || {
+    let mut source = use_resource(move || {
         let addr = addr.read().clone();
         let creds = creds.read().clone();
         let profile = profile_sig.read().clone();
@@ -444,6 +506,16 @@ pub fn LiveVideoStage(
                 .open(&addr, &token, &creds)
                 .await
                 .map_err(|e| format!("backend_error:{e}"))
+        }
+    });
+
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let retry = matches!(&*source.peek(), Some(Err(reason)) if reason.starts_with("backend_error:"));
+            if retry {
+                source.restart();
+            }
         }
     });
 
@@ -471,6 +543,13 @@ pub fn LiveVideoStage(
                             p { {i18n::t(locale, key)} }
                             if let Some(msg) = detail {
                                 p { class: "live-video-detail", "{msg}" }
+                                button {
+                                    class: "icon-btn",
+                                    title: i18n::t(locale, "btn_retry"),
+                                    aria_label: i18n::t(locale, "btn_retry"),
+                                    onclick: move |_| source.restart(),
+                                    Icon { name: "refresh-cw", size: 18 }
+                                }
                             }
                         }
                     }
@@ -483,6 +562,7 @@ pub fn LiveVideoStage(
 
 #[component]
 pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> Element {
+    let mut image_attempt = use_signal(|| 0_u64);
     let mut show_details = use_signal(|| *video::SHOW_VIDEO_DETAILS.borrow());
     use_future(move || async move {
         let mut updates = video::SHOW_VIDEO_DETAILS.subscribe();
@@ -512,7 +592,18 @@ pub fn VideoPlayer(source: video::VideoSource, locale: crate::state::Locale) -> 
             rsx! {
                 div { class: "live-video-frame live-video-frame--image",
                     "data-video-details": "{show_details}",
-                    img { class: "live-video-frame", src: "{source.url}", alt: i18n::t(locale, "nav_live_video") }
+                    img {
+                        key: "{source.url}:{image_attempt}",
+                        class: "live-video-frame",
+                        src: "{source.url}",
+                        alt: i18n::t(locale, "nav_live_video"),
+                        onerror: move |_| {
+                            spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                image_attempt += 1;
+                            });
+                        },
+                    }
                     div {
                         class: if software { "video-decode-status video-decode-status--software" } else { "video-decode-status" },
                         span {

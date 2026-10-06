@@ -59,6 +59,16 @@ pub fn ProfileSelector(addr: ReadSignal<String>, creds: Memo<Credentials>) -> El
         }
     });
 
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let retry = matches!(&*profiles_res.peek(), Some(Err(_)));
+            if retry {
+                profiles_res.restart();
+            }
+        }
+    });
+
     use_effect(move || {
         let selected = ctx.selected_profile.read().clone();
         let next = match &*profiles_res.read() {

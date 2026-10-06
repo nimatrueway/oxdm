@@ -209,6 +209,8 @@ Picture-in-picture remains frameless as before.
   unavailable. No sidecar binaries or ffmpeg required. Pinch the trackpad to
   zoom the picture digitally (up to 8×); two-finger scroll pans while zoomed.
   If the camera refuses or drops the stream, the player shows its error.
+  Failed profile loads, video opens, image streams, and sidebar thumbnail
+  refreshes retry automatically without restarting the app.
   Enable **App settings > Live video > Show video decoder details** to show
   a playback badge identifying camera snapshots, WebCodecs
   (hardware preferred or automatic decoder), or software H.264 → MJPEG
@@ -241,9 +243,11 @@ Picture-in-picture remains frameless as before.
   Arch or `gstreamer1.0-plugins-good` on Ubuntu/Debian); the Linux packages
   install this dependency automatically.
 - **Theater mode** — the expand button in the live toolbar fills
-  the application window, hiding navigation and camera controls without
+  the application window, hiding the titlebar, navigation, and camera controls without
   restarting playback. Hover over the video to reveal the top-right exit button
-  and restore the previous layout. This does not change OS fullscreen state.
+  and restore the previous layout, or press Escape. Double-click the video to
+  toggle OS fullscreen; double-click again to return. The toolbar
+  expand button does not change OS fullscreen state.
   Theater mode allows resizing down to 320×180; exiting restores the normal
   900×500 workspace minimum. Theater mode requests always-on-top stacking
   through the native cross-platform window API; exiting theater or leaving

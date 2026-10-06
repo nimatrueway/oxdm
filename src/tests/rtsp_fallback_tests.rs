@@ -3,6 +3,32 @@ use openh264::formats::{YUVBuffer, YUVSource};
 use std::hint::black_box;
 
 #[test]
+fn reopening_stream_updates_credentials_without_replacing_consumers() {
+    let registry = Registry::default();
+    let url = "rtsp://camera/stream1";
+    let first = registry.get_or_insert("camera", url.to_string(), &Credentials::default());
+    let _frames = first.frames.subscribe();
+    let updated = registry.get_or_insert(
+        "camera",
+        url.to_string(),
+        &Credentials {
+            username: "admin".to_string(),
+            password: "corrected-password".to_string(),
+        },
+    );
+    assert!(Arc::ptr_eq(&first, &updated));
+    assert_eq!(updated.frames.receiver_count(), 1);
+    {
+        let creds = first.creds.lock().unwrap();
+        let creds = creds.as_ref().unwrap();
+        assert_eq!(creds.username, "admin");
+        assert_eq!(creds.password, "corrected-password");
+    }
+    registry.get_or_insert("camera", url.to_string(), &Credentials::default());
+    assert!(first.creds.lock().unwrap().is_none());
+}
+
+#[test]
 fn fallback_and_snapshot_jpegs_preserve_range_colors_and_padded_strides() {
     let (width, height) = (24, 18);
     for (y, u, v) in [

@@ -30,7 +30,7 @@ class Element {
     dispatchEvent() {}
 }
 
-function setup(support, { renderer, gl = null } = {}) {
+function setup(support, { renderer, gl = null, timers = { setTimeout, clearTimeout } } = {}) {
     let Player;
     const draws = [];
     const context = {
@@ -55,8 +55,8 @@ function setup(support, { renderer, gl = null } = {}) {
         customElements: { define: (_, value) => { Player = value; } },
         performance,
         console: { warn() {}, error() {}, debug() {} },
-        clearTimeout,
-        setTimeout,
+        clearTimeout: timers.clearTimeout,
+        setTimeout: timers.setTimeout,
         atob,
         cancelAnimationFrame() {},
         CustomEvent: class {},
@@ -127,6 +127,52 @@ function videoFrame() {
         closed: 0, close() { this.closed++; },
     };
 }
+
+test('failed MJPEG images retry and pause or disconnect cancels recovery', () => {
+    const pending = new Map();
+    let nextId = 0;
+    const player = setup(null, {
+        timers: {
+            setTimeout(callback, delay) {
+                assert.equal(delay, 2000);
+                const id = ++nextId;
+                pending.set(id, callback);
+                return id;
+            },
+            clearTimeout(id) { pending.delete(id); },
+        },
+    });
+    player.fallback('test');
+    const fail = player.img.listeners.get('error');
+    fail();
+    assert.equal(pending.size, 1);
+    player.img.removeAttribute('src');
+    pending.get(player.imageRetryTID)();
+    assert.equal(player.img.src, 'http://127.0.0.1:1234/mjpeg/test');
+    assert.equal(pending.size, 0);
+    fail();
+    player.img.listeners.get('load')();
+    assert.equal(pending.size, 0);
+    fail();
+    player.teardown();
+    assert.equal(pending.size, 0);
+    player.paused = true;
+    fail();
+    assert.equal(pending.size, 0);
+    player.paused = false;
+    player.isConnected = false;
+    fail();
+    assert.equal(pending.size, 0);
+});
+
+test('player controls do not toggle theater on double-click', () => {
+    const player = setup(null);
+    for (const button of [player.playBtn, player.muteBtn]) {
+        let stopped = false;
+        button.listeners.get('dblclick')({ stopPropagation() { stopped = true; } });
+        assert.equal(stopped, true);
+    }
+});
 
 test('explicit Canvas 2D override bypasses WebGL and frames are scaled and closed', () => {
     const gl = mockGl();

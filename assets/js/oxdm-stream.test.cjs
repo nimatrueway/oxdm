@@ -60,6 +60,8 @@ function playerFor(audio) {
         WebSocket: { OPEN: 1 },
         performance: { now: () => 0 },
         console: { warn() {} },
+        setTimeout,
+        clearTimeout,
     };
     vm.runInNewContext(
         fs.readFileSync(path.join(__dirname, 'oxdm-stream.js'), 'utf8'),

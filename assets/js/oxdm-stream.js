@@ -205,6 +205,7 @@ class OxdmStream extends HTMLElement {
         // the controls from doing that.
         for (const button of [this.playBtn, this.muteBtn]) {
             button.addEventListener('mousedown', (event) => event.stopPropagation());
+            button.addEventListener('dblclick', (event) => event.stopPropagation());
         }
         this.appendChild(this.bar);
         this.refreshBar();
@@ -266,6 +267,7 @@ class OxdmStream extends HTMLElement {
 
     teardown() {
         clearTimeout(this.reconnectTID);
+        clearTimeout(this.imageRetryTID);
         if (this.ws) { const ws = this.ws; this.ws = null; ws.onclose = null; ws.close(); }
         if (this.decoder) { try { this.decoder.close(); } catch (_) {} this.decoder = null; }
         if (this.img) { this.img.removeAttribute('src'); }
@@ -367,6 +369,7 @@ class OxdmStream extends HTMLElement {
     }
 
     fallback(reason) {
+        clearTimeout(this.imageRetryTID);
         console.warn('[oxdm-stream] falling back to MJPEG:', reason);
         if (this.decoder) { try { this.decoder.close(); } catch (_) {} this.decoder = null; }
         this.flushQueue();
@@ -376,8 +379,16 @@ class OxdmStream extends HTMLElement {
             this.img = document.createElement('img');
             this.img.className = 'oxdm-stream-canvas';
             this.img.addEventListener('load', () => {
+                clearTimeout(this.imageRetryTID);
                 this.setLive(true);
                 this.reportSize(this.img.naturalWidth, this.img.naturalHeight);
+            });
+            this.img.addEventListener('error', () => {
+                this.setLive(false);
+                clearTimeout(this.imageRetryTID);
+                if (!this.paused && this.isConnected) {
+                    this.imageRetryTID = setTimeout(() => this.fallback('retrying MJPEG fallback'), 2000);
+                }
             });
             this.canvas.replaceWith(this.img);
         }
