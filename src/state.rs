@@ -360,6 +360,11 @@ pub struct Ctx {
     /// their own onkeydown — they have richer close semantics than a
     /// global signal can express cleanly.
     pub keyboard_action: Signal<Option<GlobalKey>>,
+    /// Live view theater mode. Global, not local to LiveVideoView: the view
+    /// is keyed by device address, so switching cameras from the theater
+    /// right-click menu remounts it — a local signal would silently drop
+    /// the user out of theater mode on every switch.
+    pub theater: Signal<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

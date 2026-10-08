@@ -216,6 +216,7 @@ fn App() -> Element {
         drag_just_finished: use_signal(|| false),
         selected_profile: use_signal(|| None),
         keyboard_action: use_signal(|| None),
+        theater: use_signal(|| false),
         log_to_file: use_signal(|| cfg.log_to_file),
         tls_strict: use_signal(|| cfg.tls_strict),
         show_video_details: use_signal(|| cfg.show_video_details),

@@ -6,6 +6,20 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.11] - 2026-10-08
+
+### Added
+- Right-clicking the video in theater mode opens a camera switcher menu — one
+  entry per device, the active one check-marked — so cameras can be swapped
+  without leaving theater mode or reaching for the hidden sidebar.
+
+### Fixed
+- Switching cameras while in theater mode no longer drops out of theater:
+  theater state is global, so the remounted live view re-applies it instead of
+  tearing down the window chrome mid-switch.
+
+---
+
 ## [0.6.10] - 2026-10-05
 
 ### Fixed

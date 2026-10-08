@@ -1,5 +1,5 @@
 #![allow(non_snake_case)]
-use crate::components::{DevicePanel, Icon, ProfileSelector};
+use crate::components::{ContextMenu, DevicePanel, Icon, ProfileSelector};
 use crate::i18n;
 use crate::state::{Credentials, Ctx, View};
 use crate::video::{self, EmbedKind};
@@ -72,10 +72,15 @@ pub fn LiveVideoView(
     let ctx = use_context::<Ctx>();
     let locale = *ctx.locale.read();
     let mode = use_signal(LiveVideoMode::default);
-    let mut theater = use_signal(|| false);
+    // Theater lives in Ctx: this component is keyed by device address, so a
+    // camera switch from the theater right-click menu remounts it and a
+    // local signal would exit theater mode behind the user's back.
+    let mut theater = ctx.theater;
     let mut pre_fullscreen_theater = use_signal(|| false);
     let mut drag_anchor = use_signal(|| None::<(f64, f64, f64, f64)>);
     let mut menu_open = use_signal(|| false);
+    // Position of the theater right-click camera switcher.
+    let mut switch_menu = use_signal(|| None::<(f64, f64)>);
     let window = use_hook(dioxus::desktop::window);
     let drag_window = window.clone();
     let decorations = use_hook(|| window.window.is_decorated());
@@ -89,8 +94,14 @@ pub fn LiveVideoView(
     });
     let drop_window = window.clone();
     use_drop(move || {
+        // Theater is global and this component is keyed by device address:
+        // switching cameras from the theater right-click menu unmounts this
+        // instance and mounts a fresh one whose effect re-applies theater.
+        // Tearing the window state down here would flicker the titlebar and
+        // drop fullscreen for nothing. With theater already off, the effect
+        // above has restored the window, so this is just a safety net.
         if *theater.peek() {
-            drop_window.set_fullscreen(false);
+            return;
         }
         drop_window.window.set_decorations(decorations);
         crate::set_main_window_theater(&drop_window.window, false);
@@ -147,13 +158,26 @@ pub fn LiveVideoView(
         "record"
     };
     let theater_open = *theater.read();
+    let switch_pos = *switch_menu.read();
+    // Read guards for the theater switcher menu; held across the render the
+    // same way DeviceList holds its device list.
+    let devices = ctx.devices.read();
+    let sel = *ctx.selected.read();
 
     rsx! {
         div {
             class: if theater_open { "live-video-view live-video-view--theater" } else { "live-video-view" },
             tabindex: "0",
             onkeydown: move |event| {
-                if event.key() == dioxus::html::input_data::keyboard_types::Key::Escape && theater() {
+                if event.key() != dioxus::html::input_data::keyboard_types::Key::Escape {
+                    return;
+                }
+                // Escape closes the switcher first; only when it is not
+                // open does it leave theater mode.
+                if switch_menu.peek().is_some() {
+                    event.stop_propagation();
+                    switch_menu.set(None);
+                } else if theater() {
                     event.stop_propagation();
                     dioxus::desktop::window().set_fullscreen(false);
                     theater.set(*pre_fullscreen_theater.peek());
@@ -161,6 +185,17 @@ pub fn LiveVideoView(
                     // theater, no fullscreen) exits instead of restoring.
                     pre_fullscreen_theater.set(false);
                 }
+            },
+            oncontextmenu: move |e: Event<MouseData>| {
+                // Theater hides the sidebar, so the whole theater surface
+                // carries the camera switcher. Outside theater the native
+                // menu is left alone.
+                if !theater() {
+                    return;
+                }
+                e.prevent_default();
+                let c = e.data().client_coordinates();
+                switch_menu.set(Some((c.x, c.y)));
             },
             div { class: "content-header live-toolbar",
                 ProfileSelector { addr, creds }
@@ -372,6 +407,15 @@ pub fn LiveVideoView(
                         }
                     },
                     onmousedown: move |event| {
+                        // Only the primary button drags the window; the
+                        // right button opens the camera switcher, and its
+                        // mouseup lands on the menu overlay — dragging on
+                        // it would leave the anchor stuck on.
+                        if event.data().trigger_button()
+                            != Some(dioxus::html::input_data::MouseButton::Primary)
+                        {
+                            return;
+                        }
                         if !theater() || window.window.fullscreen().is_some() {
                             return;
                         }
@@ -425,6 +469,39 @@ pub fn LiveVideoView(
                             theater.set(false);
                         },
                         Icon { name: "minimize", size: 16 }
+                    }
+                }
+                if theater_open {
+                    if let Some((mx, my)) = switch_pos {
+                        ContextMenu {
+                            x: mx,
+                            y: my,
+                            on_close: move |_| switch_menu.set(None),
+                            // One entry per device, the active one
+                            // check-marked. Clicking only moves the
+                            // selection: the view remounts keyed by address
+                            // and the global theater signal keeps theater
+                            // mode on.
+                            for (i, dev) in devices.iter().enumerate() {
+                                button {
+                                    key: "{i}",
+                                    class: "ctx-menu-item",
+                                    onclick: move |_| {
+                                        switch_menu.set(None);
+                                        ctx.selected.clone().set(Some(i));
+                                    },
+                                    span {
+                                        class: "ctx-menu-item-icon",
+                                        if sel == Some(i) {
+                                            Icon { name: "check", size: 14 }
+                                        } else {
+                                            Icon { name: "video", size: 14 }
+                                        }
+                                    }
+                                    "{dev.name}"
+                                }
+                            }
+                        }
                     }
                 }
             }

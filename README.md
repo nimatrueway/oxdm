@@ -253,6 +253,8 @@ Picture-in-picture remains frameless as before.
   through the native cross-platform window API; exiting theater or leaving
   the live view restores normal stacking. Support depends on the window
   manager: some Linux compositors, including Hyprland, ignore this request.
+  Right-click the video in theater mode to switch cameras in place — the
+  menu lists every device and marks the active one.
 - **Compact live toolbar** — Snapshot, Record, and Theater stay visible.
   The More options (⋯) menu holds PiP, Recordings, Camera settings, and the
   RTSP / Snapshot playback choice. Click outside the menu or press Escape
