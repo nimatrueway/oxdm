@@ -6,6 +6,16 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.12] - 2026-10-09
+
+### Fixed
+- Zoomed live video keeps its pan position across fullscreen switches and
+  window resizes: the pan offset is stored as a ratio of the frame instead of
+  absolute pixels and re-applied when the frame changes size, so the region
+  under the pointer stays put.
+
+---
+
 ## [0.6.11] - 2026-10-08
 
 ### Added

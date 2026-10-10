@@ -449,6 +449,8 @@ class OxdmStream extends HTMLElement {
         if (zoom) {
             zoomState.set(canvas, zoom);
             zoomState.delete(old);
+            if (zoomResize) { zoomResize.unobserve(old); zoomResize.observe(canvas); }
+            applyZoom(canvas);
         }
         old.replaceWith(canvas);
         this.canvas = canvas;
@@ -591,8 +593,17 @@ function base64ToBytes(b64) {
 // to zoom. WebKit reports a trackpad pinch as gesture* events, Chromium as
 // ctrl+wheel.
 const MAX_ZOOM = 8;
-const zoomState = new WeakMap(); // picture element -> { s, x, y }
+// picture element -> { s, rx, ry }: scale plus pan as a fraction of the box,
+// so a fullscreen switch or window resize keeps the same picture region in
+// view — the transform is re-derived from the ratios instead of stale pixels.
+const zoomState = new WeakMap();
 let pinch = null;                // { media, scale } during a WebKit gesture
+
+// Re-derive the transform when the box resizes, re-clamping in case the
+// letterboxing changed.
+const zoomResize = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
+    for (const entry of entries) if (zoomState.has(entry.target)) applyZoom(entry.target);
+}) : null;
 
 // The element holding the pixels: a plain <img> frame, or the player's
 // canvas/<img> inside <oxdm-stream>.
@@ -602,22 +613,41 @@ function zoomTarget(node) {
     return frame.matches('img') ? frame : frame.querySelector('.oxdm-stream-canvas');
 }
 
+// Pan in pixels for the current box size, derived from the stored ratios.
+function zoomPixels(media) {
+    const z = zoomState.get(media);
+    return z ? { s: z.s, x: z.rx * media.clientWidth, y: z.ry * media.clientHeight }
+             : { s: 1, x: 0, y: 0 };
+}
+
 function setZoom(media, s, x, y) {
     const w = media.clientWidth, h = media.clientHeight;
     if (s <= 1 || !w || !h) {
         zoomState.delete(media);
+        if (zoomResize) zoomResize.unobserve(media);
         media.style.transform = '';
         return;
     }
-    // object-fit: contain letterboxes the picture, so clamp against the
-    // picture rather than the element box.
+    zoomState.set(media, { s, rx: x / w, ry: y / h });
+    if (zoomResize) zoomResize.observe(media);
+    applyZoom(media);
+}
+
+// Turn the stored ratios into a transform for the current box size, clamping
+// against the picture (object-fit: contain letterboxes it) and writing the
+// clamped ratios back.
+function applyZoom(media) {
+    const z = zoomState.get(media);
+    const w = media.clientWidth, h = media.clientHeight;
     const nw = media.naturalWidth || media.width, nh = media.naturalHeight || media.height;
+    if (!z || !w || !h || !nw || !nh) return;
     const fit = Math.min(w / nw, h / nh);
-    x = clampPan(x, s, w, nw * fit);
-    y = clampPan(y, s, h, nh * fit);
-    zoomState.set(media, { s, x, y });
+    const x = clampPan(z.rx * w, z.s, w, nw * fit);
+    const y = clampPan(z.ry * h, z.s, h, nh * fit);
+    z.rx = x / w;
+    z.ry = y / h;
     media.style.transformOrigin = '0 0';
-    media.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+    media.style.transform = `translate(${x}px, ${y}px) scale(${z.s})`;
 }
 
 // Keep the scaled picture covering the box on this axis, or centred while
@@ -629,7 +659,7 @@ function clampPan(t, s, box, pic) {
 }
 
 function zoomBy(media, factor, clientX, clientY) {
-    const cur = zoomState.get(media) || { s: 1, x: 0, y: 0 };
+    const cur = zoomPixels(media);
     const s = Math.min(MAX_ZOOM, Math.max(1, cur.s * factor));
     const k = s / cur.s;
     // Pointer in untransformed element coordinates; the point under it stays put.
@@ -643,13 +673,13 @@ function zoomBy(media, factor, clientX, clientY) {
 document.addEventListener('wheel', e => {
     const media = zoomTarget(e.target);
     if (!media) return;
-    const cur = zoomState.get(media);
     if (e.ctrlKey) {
         e.preventDefault();
         zoomBy(media, Math.exp(-e.deltaY / 100), e.clientX, e.clientY);
-    } else if (cur) {
+    } else if (zoomState.has(media)) {
         e.preventDefault();
-        setZoom(media, cur.s, cur.x - e.deltaX, cur.y - e.deltaY);
+        const p = zoomPixels(media);
+        setZoom(media, p.s, p.x - e.deltaX, p.y - e.deltaY);
     }
 }, { passive: false });
 
