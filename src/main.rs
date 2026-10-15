@@ -14,6 +14,7 @@ mod tests;
 pub(crate) mod util;
 mod video;
 mod views;
+mod window_drag;
 
 use components::{ConfirmDialogModal, DeviceList, ToastContainer};
 use state::{Credentials, Ctx, GlobalKey, SettingsTab, View};
@@ -410,6 +411,17 @@ fn App() -> Element {
         let creds = ctx.global_credentials.peek().clone();
         let devices = ctx.devices.peek().clone();
         persist::save_health_groups(&creds, &devices, &groups);
+    });
+
+    // Window-drag regions ([data-window-drag]): the empty-area hit-test
+    // and the gesture state machine run in JS because Dioxus mouse events
+    // don't expose the DOM target. Messages: 0 = press, 1 = move,
+    // 2 = release; see window_drag.rs.
+    use_future(|| async move {
+        let mut drag_events = document::eval(window_drag::SCRIPT);
+        while let Ok((kind, x, y)) = drag_events.recv::<(u8, f64, f64)>().await {
+            window_drag::on_message(kind, x, y);
+        }
     });
 
     let theme_class = ctx.theme.read().css_class();

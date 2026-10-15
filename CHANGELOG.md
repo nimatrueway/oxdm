@@ -6,6 +6,27 @@ Changelog tracking starts at 0.1.5.
 
 ---
 
+## [0.6.13] - 2026-10-15
+
+### Added
+- Drag the window from empty areas of the topbar, the device-list sidebar,
+  the live toolbar, or the video itself — in windowed mode as well as
+  theater. The drag is handed to the OS-native window mover (with a throttled
+  fallback), so it tracks the cursor at display rate and across monitors
+  without stalling or falling behind.
+- Double right-click the video to toggle between theater and windowed mode.
+
+### Changed
+- The theater camera switcher opens after a short delay on right-click, so a
+  double right-click toggles theater without flashing the menu.
+
+### Fixed
+- Right-clicking the video no longer shows the webview's developer menu
+  (Reload / Inspect Element); the native context menu remains available in
+  text fields.
+
+---
+
 ## [0.6.12] - 2026-10-09
 
 ### Fixed

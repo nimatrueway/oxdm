@@ -2257,9 +2257,12 @@ a      { color: var(--blue); text-decoration: none; }
   background: var(--surface0);
 }
 /* While a pointer drag is in progress, force the grabbing cursor everywhere
-   (no native HTML5 DnD, so no stuck no-drop cursor) and stop text selection. */
+   (no native HTML5 DnD, so no stuck no-drop cursor) and stop text selection.
+   .window-dragging is the JS-driven equivalent for window drags. */
 .dragging-active,
-.dragging-active * {
+.dragging-active *,
+.window-dragging,
+.window-dragging * {
   cursor: grabbing !important;
   user-select: none;
 }

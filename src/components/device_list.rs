@@ -431,6 +431,7 @@ pub fn DeviceList() -> Element {
         aside {
             id: "camera-sidebar",
             class: if sidebar_collapsed() { "sidebar sidebar--collapsed" } else { "sidebar" },
+            "data-window-drag": "true",
             style: format!("--camera-thumbnail-width: {}px; width: {}px;", *ctx.camera_item_size.read(), if sidebar_collapsed() { 42.0 } else { sidebar_width() }),
 
             div { class: "sidebar-search",
@@ -906,6 +907,9 @@ fn DeviceCard(
     rsx! {
         div {
             class: card_class,
+            // Cards are clickable and carry the device drag-and-drop; the
+            // sidebar window drag must not start on them.
+            "data-no-window-drag": "true",
             onclick: move |_| {
                 // A pointer drag fires `onclick` on release too; skip the select
                 // when we just completed a drag (flag reset on next pointerdown).

@@ -77,12 +77,17 @@ pub fn LiveVideoView(
     // local signal would exit theater mode behind the user's back.
     let mut theater = ctx.theater;
     let mut pre_fullscreen_theater = use_signal(|| false);
-    let mut drag_anchor = use_signal(|| None::<(f64, f64, f64, f64)>);
     let mut menu_open = use_signal(|| false);
     // Position of the theater right-click camera switcher.
     let mut switch_menu = use_signal(|| None::<(f64, f64)>);
+    // Generation counter for the delayed switcher open: a second
+    // right-click (theater toggle) bumps it, cancelling the pending menu.
+    let mut switcher_seq = use_signal(|| 0u64);
+    // Timestamp + position of the last right-click, for the
+    // double-right-click theater toggle (there is no double-contextmenu
+    // event).
+    let mut last_right_click = use_signal(|| None::<(std::time::Instant, f64, f64)>);
     let window = use_hook(dioxus::desktop::window);
-    let drag_window = window.clone();
     let decorations = use_hook(|| window.window.is_decorated());
     let theater_window = window.clone();
     use_effect(move || {
@@ -186,18 +191,64 @@ pub fn LiveVideoView(
                     pre_fullscreen_theater.set(false);
                 }
             },
+            // Double right-click toggles theater. Detected on mousedown —
+            // not contextmenu — because in theater the first right-click
+            // opens the camera switcher, whose overlay intercepts the second
+            // press's contextmenu but lets its mousedown bubble through.
+            // Fullscreen keeps double-click / Escape as its exits.
+            onmousedown: move |e: Event<MouseData>| {
+                if e.data().trigger_button()
+                    != Some(dioxus::html::input_data::MouseButton::Secondary)
+                {
+                    return;
+                }
+                if window.window.fullscreen().is_some() {
+                    return;
+                }
+                let c = e.data().client_coordinates();
+                let now = std::time::Instant::now();
+                let double = last_right_click.peek().is_some_and(|(t, x, y)| {
+                    now.duration_since(t) < std::time::Duration::from_millis(400)
+                        && (c.x - x).powi(2) + (c.y - y).powi(2) < 64.0
+                });
+                last_right_click.set(if double { None } else { Some((now, c.x, c.y)) });
+                if double {
+                    // Cancel the pending delayed switcher from the first
+                    // press, and any already-open one.
+                    let seq = *switcher_seq.peek() + 1;
+                    switcher_seq.set(seq);
+                    switch_menu.set(None);
+                    let next = !theater();
+                    theater.set(next);
+                }
+            },
             oncontextmenu: move |e: Event<MouseData>| {
                 // Theater hides the sidebar, so the whole theater surface
-                // carries the camera switcher. Outside theater the native
-                // menu is left alone.
-                if !theater() {
+                // carries the camera switcher. A contextmenu with no
+                // recorded press is the second half of a double right-click
+                // that just toggled theater — don't open the switcher on
+                // it. Outside theater a single right-click does nothing
+                // (the webview dev menu is suppressed app-wide by
+                // window_drag::SCRIPT).
+                if !theater() || last_right_click.peek().is_none() {
                     return;
                 }
                 e.prevent_default();
                 let c = e.data().client_coordinates();
-                switch_menu.set(Some((c.x, c.y)));
+                // Open after a beat: a second right-click (theater toggle)
+                // within the window bumps the generation and cancels this,
+                // so a double right-click never flashes the switcher.
+                let seq = *switcher_seq.peek() + 1;
+                switcher_seq.set(seq);
+                spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    if *switcher_seq.peek() == seq && theater() {
+                        switch_menu.set(Some((c.x, c.y)));
+                    }
+                });
             },
             div { class: "content-header live-toolbar",
+                "data-window-drag": "true",
                 ProfileSelector { addr, creds }
                 for (target, available, icon, label) in [
                     (View::PtzControl, gate.ptz, "crosshair", "workspace_ptz"),
@@ -391,7 +442,10 @@ pub fn LiveVideoView(
             }
 
             div { class: if controls_open { "live-workbench live-workbench--controls" } else { "live-workbench" },
+                // Dragging the feed moves the window (windowed and theater;
+                // fullscreen is rejected in window_drag::begin).
                 div { class: "live-feed",
+                    "data-window-drag": "true",
                     ondoubleclick: move |_| {
                         // Fullscreen implies theater; exiting restores the
                         // theater state from before fullscreen.
@@ -406,30 +460,6 @@ pub fn LiveVideoView(
                             pre_fullscreen_theater.set(false);
                         }
                     },
-                    onmousedown: move |event| {
-                        // Only the primary button drags the window; the
-                        // right button opens the camera switcher, and its
-                        // mouseup lands on the menu overlay — dragging on
-                        // it would leave the anchor stuck on.
-                        if event.data().trigger_button()
-                            != Some(dioxus::html::input_data::MouseButton::Primary)
-                        {
-                            return;
-                        }
-                        if !theater() || window.window.fullscreen().is_some() {
-                            return;
-                        }
-                        let c = event.data().screen_coordinates();
-                        let Ok(pos) = window.window.outer_position() else { return };
-                        let pos = pos.to_logical(window.window.scale_factor());
-                        drag_anchor.set(Some((c.x, c.y, pos.x, pos.y)));
-                    },
-                    onmousemove: move |event| {
-                        let Some((ax, ay, wx, wy)) = *drag_anchor.peek() else { return };
-                        let c = event.data().screen_coordinates();
-                        drag_window.window.set_outer_position(dioxus::desktop::LogicalPosition::new(wx + c.x - ax, wy + c.y - ay));
-                    },
-                    onmouseup: move |_| drag_anchor.set(None),
                     LiveVideoStage {
                         addr,
                         creds,
