@@ -80,8 +80,9 @@ pub fn stream_element_html(url: &str, locale: Locale) -> String {
         },
     });
     format!(
-        "<oxdm-stream src=\"{}\" data-renderer=\"{renderer}\" data-labels=\"{}\"></oxdm-stream>",
+        "<oxdm-stream src=\"{}\" data-renderer=\"{renderer}\" data-webkitgtk=\"{}\" data-labels=\"{}\"></oxdm-stream>",
         escape_attribute(url),
+        cfg!(target_os = "linux"),
         escape_attribute(&labels.to_string())
     )
 }

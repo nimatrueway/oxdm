@@ -18,6 +18,17 @@
 const PRESENT_DELAY_MS = 150;   // jitter buffer: ~2 frames at 15 fps
 const MAX_QUEUE = 12;           // burst cap before we re-anchor the clock
 
+// WebKitGTK 2.54 can abort in isConfigSupported() before its shared GL display
+// exists. Keep one bootstrap context per document, independent of the painter.
+let webkitDisplayContext = null;
+function initializeWebKitDisplay() {
+    if (!webkitDisplayContext || webkitDisplayContext.isContextLost()) {
+        const canvas = document.createElement('canvas');
+        webkitDisplayContext = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    }
+    return !!webkitDisplayContext && !webkitDisplayContext.isContextLost();
+}
+
 class WebGlVideoRenderer {
     constructor(canvas) {
         const gl = canvas.getContext('webgl2', {
@@ -323,6 +334,13 @@ class OxdmStream extends HTMLElement {
             return;
         }
         if (!('VideoDecoder' in window)) return this.fallback('WebCodecs unavailable');
+        if (this.getAttribute('data-webkitgtk') === 'true') {
+            try {
+                if (!initializeWebKitDisplay()) return this.fallback('WebKit graphics unavailable');
+            } catch (error) {
+                return this.fallback('WebKit graphics initialization failed: ' + error);
+            }
+        }
 
         const cfg = {
             codec: init.video.codec,

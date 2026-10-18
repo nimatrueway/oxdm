@@ -30,9 +30,13 @@ class Element {
     dispatchEvent() {}
 }
 
-function setup(support, { renderer, gl = null, timers = { setTimeout, clearTimeout } } = {}) {
+function setup(support, {
+    renderer, gl = null, gl1 = null, webkitgtk = false, contextError,
+    timers = { setTimeout, clearTimeout },
+} = {}) {
     let Player;
     const draws = [];
+    const contextRequests = [];
     const context = {
         HTMLElement: Element,
         Element,
@@ -42,8 +46,11 @@ function setup(support, { renderer, gl = null, timers = { setTimeout, clearTimeo
                 if (tag === 'canvas') {
                     let acquired;
                     element.getContext = type => {
+                        contextRequests.push({ element, type });
+                        if (contextError) throw contextError;
                         if (acquired && acquired !== type) return null;
-                        const result = type === 'webgl2' ? gl : { drawImage: (...args) => draws.push(args) };
+                        const result = type === 'webgl2' ? gl
+                            : type === 'webgl' ? gl1 : { drawImage: (...args) => draws.push(args) };
                         if (result) acquired = type;
                         return result;
                     };
@@ -84,9 +91,11 @@ function setup(support, { renderer, gl = null, timers = { setTimeout, clearTimeo
     );
     player.setAttribute('src', 'ws://127.0.0.1:1234/ws/test');
     player.setAttribute('data-labels', JSON.stringify(labels));
+    player.setAttribute('data-webkitgtk', String(webkitgtk));
     if (renderer) player.setAttribute('data-renderer', renderer);
     player.connectedCallback();
     player.canvasDraws = draws;
+    player.contextRequests = contextRequests;
     return player;
 }
 
@@ -287,6 +296,77 @@ const init = {
     video: { codec: 'avc1.64001F', description: '', width: 1920, height: 1080 },
 };
 const settled = () => new Promise(resolve => setImmediate(resolve));
+
+test('WebKitGTK initializes its display before probing and reuses it on reconnect', async () => {
+    const player = setup(() => {
+        assert.deepEqual(player.contextRequests.map(request => request.type), ['webgl2']);
+        return true;
+    }, { webkitgtk: true, gl: mockGl() });
+    player.onInit(init);
+    await settled();
+    assert.equal(player.decoder.state, 'configured');
+    assert.notEqual(player.contextRequests[0].element, player.canvas);
+    player.teardown();
+    player.connect();
+    player.onInit(init);
+    await settled();
+    assert.equal(player.decoder.state, 'configured');
+    assert.equal(player.contextRequests.length, 1);
+});
+
+test('WebKitGTK display initialization preserves the Canvas 2D painter', async () => {
+    const player = setup(() => true, { webkitgtk: true, renderer: '2d', gl: mockGl() });
+    player.onInit(init);
+    await settled();
+    const frame = videoFrame();
+    player.paint(frame);
+    assert.equal(player.decoder.state, 'configured');
+    assert.equal(player.getAttribute('data-renderer-active'), '2d');
+    assert.deepEqual(player.canvasDraws[0], [frame, 0, 0, 640, 360]);
+});
+
+test('WebKitGTK can initialize its display through WebGL 1', async () => {
+    const player = setup(() => true, { webkitgtk: true, gl1: mockGl() });
+    player.onInit(init);
+    await settled();
+    assert.equal(player.decoder.state, 'configured');
+    assert.deepEqual(player.contextRequests.map(request => request.type), ['webgl2', 'webgl']);
+});
+
+for (const [reason, options] of [
+    ['unavailable', {}],
+    ['lost', { gl: { isContextLost: () => true } }],
+    ['throws', { contextError: new Error('GL initialization failed') }],
+]) {
+    test(`WebKitGTK graphics ${reason} uses MJPEG without probing WebCodecs and keeps audio`, async () => {
+        let probes = 0;
+        const player = setup(() => { probes++; return true; }, { webkitgtk: true, ...options });
+        player.onInit({ ...init, audio: { sample_rate: 8000, channels: 1 } });
+        await settled();
+        assert.equal(probes, 0);
+        assert.equal(player.decoder, undefined);
+        assert.equal(player.decodePath, 'software-mjpeg');
+        assert.equal(player.img.src, 'http://127.0.0.1:1234/mjpeg/test');
+        player.muted = false;
+        player.sendAudioPref();
+        assert.deepEqual(player.ws.sent.at(-1), { type: 'audio', enabled: true });
+    });
+}
+
+test('other platforms do not bootstrap a WebKitGTK display', async () => {
+    const player = setup(() => true);
+    player.onInit(init);
+    await settled();
+    assert.equal(player.decoder.state, 'configured');
+    assert.equal(player.contextRequests.length, 0);
+});
+
+test('WebKitGTK without WebCodecs skips graphics initialization', () => {
+    const player = setup(null, { webkitgtk: true });
+    player.onInit(init);
+    assert.equal(player.decodePath, 'software-mjpeg');
+    assert.equal(player.contextRequests.length, 0);
+});
 
 test('hardware-preferred WebCodecs is labeled as a preference, not verified hardware', async () => {
     const player = setup(() => true);

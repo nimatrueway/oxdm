@@ -160,6 +160,12 @@ decoding is unavailable.
 to WebCodecs when the stream configuration is supported. “Hardware preferred”
 means acceleration was requested, not verified GPU utilization.
 
+On Linux, OxDM initializes WebKit's graphics display before probing WebCodecs.
+This avoids a WebKitGTK 2.54 startup abort when the decoder requests an
+uninitialized GL display. The guard also applies to pop-outs, replay, and the
+Canvas 2D renderer override. If graphics initialization fails, playback uses
+the existing software H.264-to-MJPEG fallback instead of probing the decoder.
+
 ### Hyprland window chrome
 
 On Linux, OxDM detects Hyprland through `HYPRLAND_INSTANCE_SIGNATURE` or a

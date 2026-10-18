@@ -68,6 +68,12 @@ async fn video_details_update_independent_windows_without_replacing_players() {
 }
 
 #[test]
+fn stream_markup_enables_webkit_display_initialization_only_on_linux() {
+    let html = stream_element_html("ws://127.0.0.1/ws/test", Locale::En);
+    assert!(html.contains(&format!("data-webkitgtk=\"{}\"", cfg!(target_os = "linux"))));
+}
+
+#[test]
 fn stream_markup_selects_configured_renderer() {
     let expected = match std::env::var("OXDM_VIDEO_RENDERER") {
         Err(std::env::VarError::NotPresent) => "webgl2",
